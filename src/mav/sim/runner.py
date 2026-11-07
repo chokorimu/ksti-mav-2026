@@ -20,6 +20,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import numpy as np
+
 from mav.app import step
 from mav.control.state_machine import RobotStateMachine
 from mav.io.actuator import CallbackActuator, SafeActuator
@@ -34,6 +36,8 @@ from mav.sim.world import SimWorld, WorldConfig, build_path
 from mav.types import Command, STOP
 
 DEPARTURE_M = 0.25  # |offset| beyond this counts as leaving the lane centre corridor
+TRAIL_MAX = 400     # poses kept for the arena trail
+LANE_STEP_M = 0.25  # display sampling of the centreline polyline
 
 
 @dataclass
@@ -79,6 +83,19 @@ def _pace(tick_start: float, dt: float) -> None:
         time.sleep(remaining)
 
 
+def _lane_points(world: SimWorld, step_m: float = LANE_STEP_M) -> list:
+    """Centreline polyline sampled for display (world.path is sampled every 1 cm)."""
+    pts = world.path.points
+    if len(pts) < 2:
+        return []
+    spacing = float(np.linalg.norm(np.diff(pts, axis=0), axis=1).mean())
+    stride = max(1, int(round(step_m / max(spacing, 1e-9))))
+    idx = list(range(0, len(pts), stride))
+    if idx[-1] != len(pts) - 1:
+        idx.append(len(pts) - 1)
+    return [[float(p[0]), float(p[1])] for p in pts[idx]]
+
+
 def run_sim(
     scenario: str | Scenario,
     *,
@@ -110,7 +127,8 @@ def run_sim(
     sm = RobotStateMachine()
     buttons = QueueButtons()
     sim_time = [0.0]
-    cell: dict = {"world": None, "res": None}
+    cell: dict = {"world": None, "res": None, "lane": [], "trail": [],
+                  "lane_width_m": 0.0, "corridor_m": 0.0}
     last: dict = {"frame": None, "meas": None, "debug": {}}
 
     def load(sc: Scenario) -> None:
@@ -119,6 +137,11 @@ def run_sim(
         cell["res"] = SimResult(scenario=sc.name)
         sm.new_attempt()
         sim_time[0] = 0.0
+        w = cell["world"]
+        cell["lane"] = _lane_points(w)
+        cell["trail"] = [[w.x, w.y, w.theta]]
+        cell["lane_width_m"] = w.cfg.lane_width_m
+        cell["corridor_m"] = w.cfg.corridor_m
 
     load(scenario)
 
@@ -195,6 +218,10 @@ def run_sim(
                 },
                 debug=last["debug"],
                 command={"speed": cmd.speed, "curvature": cmd.curvature},
+                lane=cell["lane"],
+                trail=cell["trail"],
+                lane_width_m=cell["lane_width_m"],
+                corridor_m=cell["corridor_m"],
                 metrics={
                     "detected": res.detected,
                     "lost": res.lost,
@@ -236,6 +263,9 @@ def run_sim(
                 break
             cmd = step(sm, camera, buttons, actuator, policy_fn)
             ticks += 1
+            cell["trail"].append([world.x, world.y, world.theta])
+            if len(cell["trail"]) > TRAIL_MAX:
+                del cell["trail"][: len(cell["trail"]) - TRAIL_MAX]
             if overlay_path is not None and last["frame"] is not None:
                 writer = _overlay_writer(writer, overlay_path, last["frame"])
                 _draw_overlay(last["frame"], last["meas"], world, det.cfg)
@@ -292,9 +322,17 @@ def _draw_overlay(frame, meas, world: SimWorld, det_cfg: LaneConfig) -> None:
         cv2.putText(frame, "lane lost", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 
 
+def _repo_root() -> Path:
+    """Walk up from this file until a directory containing configs/sim.yaml."""
+    for base in Path(__file__).resolve().parents:
+        if (base / "configs" / "sim.yaml").is_file():
+            return base
+    return Path.cwd()
+
+
 def _sim_config() -> dict:
     """Defaults from configs/sim.yaml (section `sim:`), if present."""
-    path = Path(__file__).resolve().parents[2] / "configs" / "sim.yaml"
+    path = _repo_root() / "configs" / "sim.yaml"
     if not path.exists():
         return {}
     import yaml
@@ -332,13 +370,18 @@ def main(argv: list[str] | None = None) -> int:
 
     cfg = _sim_config()
     name = args.scenario or cfg.get("scenario", "straight")
-    dash = (cfg.get("dashboard") or {}) if args.dashboard else {}
+    dash_cfg = cfg.get("dashboard") or {}
+    # Server only starts on request: --dashboard, or enabled: true in the config.
+    # deploy.yaml has no dashboard section, so it can never start there.
+    dash = dash_cfg if (args.dashboard or dash_cfg.get("enabled")) else {}
     bridge = None
     server = None
+    stop_server = None
     if dash:
-        from mav.sim.dashboard.server import serve_in_thread
+        from mav.sim.dashboard import server as dashboard_server
 
-        server, bridge = serve_in_thread(dash)
+        server, bridge = dashboard_server.serve_in_thread(dash)
+        stop_server = dashboard_server.stop
 
     res = run_sim(
         name,
@@ -356,7 +399,7 @@ def main(argv: list[str] | None = None) -> int:
             input("press Enter to stop the dashboard... ")
         except (EOFError, KeyboardInterrupt):
             pass
-        server.shutdown()
+        stop_server(server)
     return 0 if not res.crashed else 1
 
 

@@ -12,3 +12,13 @@ sim:
   max_steps: 1200
   seed: 0
   overlay: null
+
+  # Web dashboard (viewer + control channel). Starts only when asked for:
+  # `--dashboard` on the command line, or enabled: true here. The deploy
+  # profile has no such section, so it can never start a server there.
+  # Open http://127.0.0.1:8000 while the sim runs.
+  dashboard:
+    enabled: false
+    host: 127.0.0.1
+    port: 8000
+    realtime: true

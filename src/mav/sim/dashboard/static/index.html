@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MAV sim dashboard (placeholder)</title>
+<style>
+  body { font: 14px/1.5 monospace; background: #111; color: #ddd; margin: 0; padding: 16px; }
+  h1 { font-size: 16px; }
+  #out { white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<h1>MAV sim dashboard &mdash; placeholder</h1>
+<p>The real 3D arena / camera panel / controls are subtasks 3&ndash;5. This page only
+proves the HTTP pipe works from a browser.</p>
+<pre id="out">loading&hellip;</pre>
+<script type="module">
+const out = document.getElementById('out');
+async function tick() {
+  try {
+    const [state, lane, scenarios] = await Promise.all([
+      fetch('/state.json').then(r => r.json()),
+      fetch('/lane.json').then(r => r.json()),
+      fetch('/scenarios').then(r => r.json()),
+    ]);
+    out.textContent = JSON.stringify({ state, lane_points: lane.lane.length, scenarios }, null, 1);
+  } catch (e) {
+    out.textContent = 'error: ' + e;
+  }
+  setTimeout(tick, 200);
+}
+tick();
+</script>
+</body>
+</html>

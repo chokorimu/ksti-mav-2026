@@ -72,6 +72,12 @@ class SimState:
     command: dict = field(default_factory=dict)   # speed, curvature
     metrics: dict = field(default_factory=dict)   # run-level counters
     fps: float = 0.0                  # wall-clock ticks per second
+    # Arena geometry. Kept out of /state.json (bulky, changes slowly) and served
+    # by /lane.json instead; the frontend polls that one at a lower rate.
+    lane: list = field(default_factory=list)      # [[x, y], ...] world metres
+    trail: list = field(default_factory=list)     # [[x, y, theta], ...] recent poses
+    lane_width_m: float = 0.0
+    corridor_m: float = 0.0
 
     def to_dict(self) -> dict:
         """JSON-safe dict. `json.dumps(state.to_dict())` must always work."""
@@ -90,5 +96,9 @@ class SimState:
                 "command": self.command,
                 "metrics": self.metrics,
                 "fps": self.fps,
+                "lane": self.lane,
+                "trail": self.trail,
+                "lane_width_m": self.lane_width_m,
+                "corridor_m": self.corridor_m,
             }
         )
