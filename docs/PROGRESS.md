@@ -151,8 +151,12 @@ check. Next: the real-recordings task below.
    `firmware/arduino/protocol.md` (ASCII lines `W`/`D`/`S`, 500 ms watchdog, boot-stopped),
    `SerialActuator` in `src/mav/io/actuator.py` (port injected, verb chosen by the mapper,
    pyserial imported lazily), `tests/test_serial_actuator.py` (11 tests, fake port).
-   Still open: the Arduino firmware itself (`core/`, `prototype.ino`, `final.ino`,
-   `platformio.ini`) — blocked on Q1 — and the m/s->PWM calibration, wheels-lifted.
+   Firmware scaffold DONE 7 Nov 2026, commit `8666501`: shared core
+   `firmware/arduino/MavCore/` (protocol.md parser + watchdog, board-agnostic C++,
+   unit-tested on the laptop with g++) + `prototype/prototype.ino` and
+   `final/final.ino` skeletons with the Q1 hardware constants deliberately empty.
+   Still open: fill the Q1 constants, write the output stages, `platformio.ini`,
+   flash test, and the m/s->PWM calibration wheels-lifted.
 6. Checkpoint / start-finish line detection. Not started. Split into subtasks before coding.
 7. ~~Web-simulator bridge~~ replaced by the web dashboard for the synthetic sim (current
    task above). The external web simulator is no longer needed; Q5 closed.

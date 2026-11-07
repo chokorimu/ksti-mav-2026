@@ -61,8 +61,9 @@ AGENTS.md
 docs/        ksti-mav-rules.md, research-plan.md, hardware.md
 configs/     sim.yaml, prototype.yaml, final.yaml
 src/         perception/, planning/, control/, io/ (camera, actuator: sim & real), sim/
-firmware/    arduino/ (MCU firmware: protocol.md, shared core/ + prototype.ino +
-              final.ino via PlatformIO; blocked on Q1)
+firmware/    arduino/ (MCU firmware: protocol.md, MavCore/ shared library,
+              prototype.ino + final.ino scaffolds via PlatformIO; hardware
+              layer blocked on Q1)
 models/      prototype/, final/
 scripts/     setup_dev.sh, setup_jetson.sh, run.sh
 tests/
@@ -94,11 +95,12 @@ tests/
     and `app.py` are untouched by it. Only the `sim` profile starts a server (`--dashboard`
     or `dashboard.enabled` in `configs/sim.yaml`); `final` has no such section and stays
     serverless. Tests: `tests/test_dashboard.py`, `tests/test_dashboard_server.py`.
-- **Not written yet:** the Arduino firmware itself (`firmware/arduino/`: `core/`,
-    `prototype/prototype.ino`, `final/final.ino`, `platformio.ini` — blocked on Q1),
-    GPIO buttons, checkpoint detection, and the dashboard's browser visual check
-    (frontend built in `8875d48`). Do not invent them; ask for the hardware facts in
-    `docs/hardware.md` first.
+- **Not written yet:** the Arduino firmware's hardware layer (`firmware/arduino/`:
+    the Q1 constants + output stages in `prototype/prototype.ino` and
+    `final/final.ino`, and `platformio.ini`; the shared `MavCore/` parser +
+    watchdog is written and laptop-tested), GPIO buttons, checkpoint detection,
+    and the dashboard's browser visual check (frontend built in `8875d48`).
+    Do not invent them; ask for the hardware facts in `docs/hardware.md` first.
 
 ## Long-running work protocol (anti-drift)
 
@@ -140,4 +142,5 @@ Run all commands from the repo root. Use bash.
   control channel only — it never computes anything, and `final` never starts a server.
 - Run on Jetson: `scripts/run.sh prototype` (debug on) or `scripts/run.sh final` (no debug, no network). Use the same `sudo nvpmodel` mode as the competition.
 - Tests: `source .venv/bin/activate && pytest` (on the Jetson install pytest first: `pip install pytest`, or `sudo apt install python3-pytest`)
+- Firmware core unit test (laptop, no Arduino needed): `scripts/test_firmware_core.sh` (g++ build + run of `firmware/arduino/MavCore/test/test_protocol.cpp`)
 - Check JetPack (on the Jetson, before any version-dependent install): `cat /etc/nv_tegra_release` and `apt show nvidia-jetpack`
