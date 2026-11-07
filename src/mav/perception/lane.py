@@ -11,7 +11,8 @@ Pipeline per frame:
      floor's own noise stays out of the mask.
   4. split the ROI into horizontal bands; the marking-pixel centroid of each band
      approximates the lane centre there (the two edge lines are symmetric around it,
-     and the dashed centre line reinforces it)
+     and the dashed centre line reinforces it). A band whose marking is smeared
+     across the image is dropped: see `max_band_span_m`.
   5. weighted quadratic fit x = a*y^2 + b*y + c over the band centroids
   6. report offset at a lookahead row, curvature, and a confidence score
 
@@ -20,6 +21,13 @@ Known limitations (v1, deliberate):
     varies with distance, so offset/curvature are approximate until the camera is
     calibrated. Signs and rough magnitudes are reliable; treat the numbers as
     uncalibrated until measured on the real robot.
+  - The quadratic assumes the lane keeps one curvature across the whole ROI, so
+    the ROI is deliberately shallow (`roi_top` 0.65 -> 0.96 m of forward distance
+    at 130 px/m). On the measured KSTI track, whose tightest centreline radius is
+    0.46 m, a deeper window wraps around the corner and no low-order polynomial
+    fits it. Measured there: at `roi_top` 0.45 (a 1.52 m window) the fit residual
+    is 25-46 px and confidence sits at 0.31-0.40, right on `min_confidence`; at
+    0.65 the residual is 3-11 px and confidence 0.37-0.91.
   - Centroid-based: if only one edge line is visible the centre estimate sits
     between that edge and the dashed centre line. Broad shadows can enter the
     dark mask and pull the centroid; RQ1 (lighting robustness) is still open.
@@ -40,7 +48,7 @@ _LUM = np.array([0.114, 0.587, 0.299], dtype=np.float32)
 @dataclass(frozen=True)
 class LaneConfig:
     polarity: str = "auto"          # "auto" | "light" | "dark" markings
-    roi_top: float = 0.45           # search starts at this fraction of frame height
+    roi_top: float = 0.65           # search starts this far down (0.0 top, 1.0 bottom)
     bg_ksize: int = 75              # window for the background estimate (odd, pixels)
     thresh_k: float = 3.5           # marking threshold at +- k * robust sigma
     n_bands: int = 12               # horizontal slices from roi_top to the bottom
@@ -50,6 +58,7 @@ class LaneConfig:
     bottom_row_m: float = 0.3       # UNCALIBRATED: forward distance of the frame's bottom row
     lookahead_frac: float = 0.5     # offset is evaluated this far down the ROI
     min_confidence: float = 0.3
+    max_band_span_m: float = 0.8    # if a band's marking spans more than this, it is dropped
     mask_frac_band: tuple[float, float] = (0.01, 0.25)  # sane marking coverage (auto mode)
 
 
@@ -110,20 +119,53 @@ def lookahead_row(cfg: LaneConfig, frame_height: int) -> float:
     return y0 + cfg.lookahead_frac * (frame_height - 1 - y0)
 
 
-def _band_points(mask: np.ndarray, n_bands: int, min_px: int) -> list[tuple[float, float, float]]:
-    """(row, column, pixel-count) of the marking centroid per horizontal band."""
+def _band_points(
+    mask: np.ndarray,
+    n_bands: int,
+    min_px: int,
+    max_span_px: float | None = None,
+    dropped: dict[str, int] | None = None,
+) -> list[tuple[float, float, float]]:
+    """(row, column, pixel-count) of the marking centroid per horizontal band.
+
+    `max_span_px` drops bands whose marking is smeared across the image. Where
+    the track is tight the lane runs ALONG a band instead of across it: the
+    marked columns then spread over 150-280 px instead of the ~60 px a 0.5 m
+    lane occupies, and the centroid of that smear is meaningless (errors up to
+    85 px measured on the KSTI track). The span is measured between the 5th and
+    95th percentile of the marked columns, so a few stray noise pixels cannot
+    fake a wide band and get a good one thrown away.
+
+    `dropped`, if given, is filled with why bands were left out: `thin` (too
+    few marking pixels) and `smeared` (span over the limit). The two are
+    different failures and the dashboard shows them separately.
+    """
     h, w = mask.shape
     edges = np.linspace(0, h, n_bands + 1).astype(int)
     xs = np.arange(w, dtype=np.float64)
     pts: list[tuple[float, float, float]] = []
+    n_thin = n_smeared = 0
     for i in range(n_bands):
         colsum = mask[edges[i]:edges[i + 1]].sum(axis=0)
         total = float(colsum.sum())
         if total < min_px:
+            n_thin += 1
             continue
+        if max_span_px is not None:
+            cols = np.nonzero(colsum)[0]
+            if cols.size:
+                cum = np.cumsum(colsum[cols])
+                lo = int(np.searchsorted(cum, 0.05 * total, side="left"))
+                hi = min(int(np.searchsorted(cum, 0.95 * total, side="left")), cols.size - 1)
+                if float(cols[hi] - cols[lo]) > max_span_px:
+                    n_smeared += 1
+                    continue
         x = float((xs * colsum).sum() / total)
         y = 0.5 * (edges[i] + edges[i + 1])
         pts.append((y, x, total))
+    if dropped is not None:
+        dropped["thin"] = n_thin
+        dropped["smeared"] = n_smeared
     return pts
 
 
@@ -209,11 +251,15 @@ class LaneDetector:
     ) -> tuple[LaneMeasurement | None, dict]:
         """Fit one polarity mask. Returns (measurement or None, debug dict)."""
         cfg = self.cfg
-        pts = _band_points(mask, cfg.n_bands, cfg.min_band_pixels)
+        max_span_px = None if cfg.max_band_span_m is None else cfg.max_band_span_m * cfg.px_per_m
+        dropped: dict[str, int] = {}
+        pts = _band_points(mask, cfg.n_bands, cfg.min_band_pixels, max_span_px, dropped)
         debug: dict = {
             "polarity": polarity,
             "mask_pixels": int(mask.sum()),
             "n_bands_with_pixels": len(pts),
+            "n_bands_dropped_smeared": dropped.get("smeared", 0),
+            "n_bands_dropped_thin": dropped.get("thin", 0),
             "band_points": [[p[0], p[1], p[2]] for p in pts],
         }
         if len(pts) < cfg.min_points:
