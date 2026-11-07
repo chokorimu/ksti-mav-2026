@@ -74,7 +74,36 @@ tests/
 - `src/mav/control/mapping.py`: `DifferentialMapper` (prototype) and `AckermannMapper` (deploy).
 - `src/mav/control/state_machine.py`: BOOT/WAIT_START/RUN/STOPPED; resume after emergency keeps the checkpoint count.
 - `src/mav/app.py`: `step()`, one loop iteration shared by sim, prototype and deploy.
-- **Not written yet:** real motor/servo drivers, GPIO buttons, lane perception, checkpoint detection, the actual policy, and the simulator bridge. Do not invent them; ask for the hardware facts in `docs/hardware.md` first.
+- `src/mav/perception/lane.py`: LaneDetector (numpy-only), offline runner
+    `PYTHONPATH=src python -m mav.perception.lane <video> [--overlay out.mp4]`.
+- `src/mav/planning/lane_policy.py`: LanePolicy (measurement -> Command, pure-pursuit). Both have tests on synthetic frames.
+- **Not written yet:** real motor/servo drivers, GPIO buttons, checkpoint detection, and the simulator bridge. Do not invent them; ask for the hardware facts in `docs/hardware.md` first.
+
+## Long-running work protocol (anti-drift)
+
+State lives in files, not in memory. Context can be lost at any time.
+
+1. Session start: read docs/PROGRESS.md first. Do not re-read the full
+   rules/research docs; open only the section relevant to the current task.
+2. Work on ONE task from PROGRESS.md at a time. Each task has a
+   "done when" check (a test or command). Do not start the next task
+   before the current one passes its check.
+3. After each finished task (or every ~30 min of work):
+   - run tests, then git commit with a clear message
+   - update PROGRESS.md: mark done, write the exact next step
+4. Never leave the repo broken at a stopping point. If you must stop
+   mid-task, first commit work-in-progress (or stash), and write in
+   PROGRESS.md: what is done, what is half-done, what to run next.
+5. Blocked by an [A#] item or missing hardware fact:
+   - append the question to docs/open-questions.md (with the task it blocks)
+   - skip to the next unblocked task; do not stop the whole session
+   - ask all pending questions together at the end, in one message
+6. Before long exploration (reading many files, searching), keep notes short:
+   write findings into PROGRESS.md instead of relying on the chat.
+7. If a task needs more than ~10 files or several modules, split it into
+   subtasks in PROGRESS.md before coding.
+8. Re-read the "Hard constraints" section before any change to the
+   state machine, actuators, or sensors.
 
 ## Commands
 Run all commands from the repo root. Use bash.
