@@ -45,7 +45,7 @@ Classical lane detector (`src/mav/perception/lane.py`, numpy-only) and a conserv
 - **Uncalibrated:** `px_per_m=130` and `bottom_row_m=0.3` are guesses. Offset/curvature are only exact at the lookahead row. Known weakness: a low camera makes near markings thick relative to the 75 px background window. Validate on real recordings before trusting the numbers.
 
 ## Next task: lane detection from real recordings
-1. Record real video from the robot camera on the Jetson, headless. Do not rely on hardware H.264 encoding; saving frames or MJPG via `cv2.VideoWriter` is safer. **(user task: camera model/interface still unknown)**
+1. Record real video from the robot camera on the Jetson, headless. Do not rely on hardware H.264 encoding; saving frames or MJPG via `cv2.VideoWriter` is safer. Camera is CSI (Raspberry Pi module); bring-up commands are in `docs/hardware.md`. **(user task)**
 2. Record variety: both marking colors (white and black) and floor colors if possible, bright and dim light, straight sections, curves, dashed centre line, a checkpoint, the start/finish line. **(user task)**
 3. ~~Build classical lane detection~~ done as v1 above; now: run it offline on the recordings and recalibrate `px_per_m` / `bottom_row_m` from them.
 4. Run it offline on the recordings first. Measure per-frame latency on the Jetson.
@@ -53,12 +53,11 @@ Classical lane detector (`src/mav/perception/lane.py`, numpy-only) and a conserv
 - Proposed command (needs approval before it goes into `AGENTS.md`): `PYTHONPATH=src python -m mav.perception.lane <video> [--overlay out.mp4]` from the repo root.
 
 ## Open questions for the user
-- How are the motors and servo driven (driver on Jetson pins, PCA9685 over I2C, or a microcontroller over USB serial)?
-- Camera model and interface (CSI or USB)?
-- Does the single rear motor drive both rear wheels through a mechanical differential?
+- How are the motors and servo driven (driver on Jetson pins, PCA9685 over I2C, or a microcontroller over USB serial)? Emergency stop: what does it cut?
 - Is the steering linkage true Ackermann geometry?
 - Organizer answers for A1 (differential), A5 (sensors), A11 (start/finish and checkpoint colors), plus checkpoint count and track map.
-- Simulator stack and how it exchanges frames and commands.
+- Simulator stack and how it exchanges frames and commands (recommendation recorded in `docs/open-questions.md` Q5).
+- Answered 7 Nov 2026: camera = CSI Raspberry Pi module; rear wheels = mechanical differential. See `docs/hardware.md`.
 
 ## Rules for any agent working here
 - Do not guess hardware facts or competition rules. Ask, and record the answer.

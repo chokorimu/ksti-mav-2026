@@ -17,12 +17,15 @@ Time pressure: Technical Meeting 8 Nov 2026, Competition 12 Nov 2026.
 
 ## Current task
 
-None in progress. Everything below is either blocked on the user or not started.
+Camera bring-up on the Jetson (unblocked since the camera is known: CSI, Raspberry Pi
+module). Run the commands in docs/hardware.md ("Camera bring-up") and save a test clip.
+Done when: `/tmp/csi_test.avi` (or similar) exists with a sane frame count.
 
 ## Next tasks (in order)
 
-1. Record real video on the Jetson (user task). Blocked: camera model/interface unknown
-   (see docs/open-questions.md Q2). Done when: a recording exists on the Jetson.
+1. Record real video on the Jetson (user task). Camera known (CSI RPi); bring-up
+   commands in docs/hardware.md. Done when: recordings of straight sections, curves,
+   both marking colors, dim/bright light, a checkpoint, start/finish exist.
 2. Run the detector offline on the recordings; recalibrate `px_per_m` and `bottom_row_m`
    (currently uncalibrated guesses: 130.0 / 0.3). Blocked by task 1.
    Done when: offsets/curvatures on recordings look sane and the constants are measured.
@@ -30,13 +33,13 @@ None in progress. Everything below is either blocked on the user or not started.
    Blocked by task 1. Done when: mean/p95 ms per frame recorded in this file.
 4. Checkpoint / start-finish line detection. Not started. Split into subtasks before coding.
 5. Simulator bridge (frame/command exchange with the web simulator). Not started; blocked
-   on the simulator stack question (Q5).
+   on the simulator stack question (Q5, recommendation recorded in open-questions.md).
 
 ## Blocked on hardware facts (details in docs/open-questions.md)
 
 - Real motor/servo drivers + GPIO buttons: driver type and pins unknown (Q1).
-- All of tasks 1-3 above: camera unknown (Q2).
-- Mechanical differential on the single rear motor (Q3), steering linkage Ackermann (Q4).
+- Steering linkage Ackermann or not (Q4) — affects the bonus, not the v1 code.
+- Simulator stack (Q5).
 
 ## Known limitations of lane detector v1
 
