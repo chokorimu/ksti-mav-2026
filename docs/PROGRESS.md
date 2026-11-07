@@ -54,21 +54,29 @@ Split into 6 subtasks (AGENTS.md rule 7). One at a time, commit after each.
       argparse values. Same bug in `__main__.py` (non-sim profiles). Guarded by
       `test_sim_config_is_read_from_the_repo`. `configs/sim.yaml` now has the `dashboard:`
       section (subtask 6's config part, done here).
-- [ ] 3. Arena 3D + car (`static/`): vendored `three.module.js`, floor, lane, car with
+- [x] 3. Arena 3D + car (`static/`): vendored `three.module.js`, floor, lane, car with
       steering front wheels, lookahead marker, trail. Done when: the user verifies visually
       on the laptop that the render matches the world.
-- [ ] 4. Camera panel + detector overlay: live frame + band centroids + fitted quadratic +
+- [x] 4. Camera panel + detector overlay: live frame + band centroids + fitted quadratic +
       lookahead row + ground-truth centre + mask thumbnail. Done when: overlay matches the
       numbers shown.
-- [ ] 5. Debug numbers + controls UI: buttons wired to `POST /control`, scenario dropdown,
+- [x] 5. Debug numbers + controls UI: buttons wired to `POST /control`, scenario dropdown,
       reset, run metrics, wall-clock FPS. Done when: the full loop works from the browser
       (select scenario -> start -> emergency -> start again (resume) -> reset).
-- [ ] 6. Config gating + docs + commit: `dashboard:` section in `configs/sim.yaml`;
+      Subtasks 3-5 DONE 7 Nov 2026, commit `8875d48` (frontend built by a subagent, then
+      audited and fixed by me: one duplicate `const isStr` broke the module). Verified
+      mechanically only — see the commit message. **Visual verification in the browser is
+      still the user's job**: open http://127.0.0.1:8000 while
+      `scripts/run.sh sim curve --dashboard` runs and check that the arena matches the world,
+      the overlay matches the numbers, and the full control loop works.
+- [x] 6. Config gating + docs + commit: `dashboard:` section in `configs/sim.yaml`;
       `deploy.yaml` has none -> no server. Update AGENTS.md, status.md, close Q5.
-      Config part DONE in subtask 2 (`19298c8`). Remaining: docs only.
+      DONE 7 Nov 2026: config part in `19298c8`, docs in `e027c07`.
 
 Frontend subtasks 3-5 are one block (same `app.js`/`index.html`) and may be delegated to a
 subagent against the JSON contract fixed in subtask 1; visual verification stays with the user.
+DONE 7 Nov 2026 (`8875d48`) — the whole dashboard task is finished except the user's visual
+check. Next: the real-recordings task below.
 
 ## Next tasks (in order)
 

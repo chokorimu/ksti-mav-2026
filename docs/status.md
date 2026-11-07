@@ -71,7 +71,8 @@ Pure viewer + control channel. `lane.py`, `lane_policy.py` and `app.py` are unto
 - Bug found and fixed while wiring this up: `_sim_config()` resolved `parents[2]` == `src/`, so `configs/sim.yaml` was **never** read and every documented default silently fell back to argparse values. Same bug in `__main__.py` for non-sim profiles. Guarded by `test_sim_config_is_read_from_the_repo`.
 - Verified by hand (laptop): `curl` against a live run returned 200 JSON/JPEG; POST emergency froze the robot; POST start resumed it; POST scenario switched to `s_curve` and waited for START.
 - Tests: `tests/test_dashboard.py` (20) + `tests/test_dashboard_server.py` (22). Full suite 99 passed (laptop).
-- **Not done:** the browser frontend itself (3D arena, camera overlay, controls UI) — subtasks 3-5. `static/` currently holds vendored `three.module.js` r160 and a placeholder `index.html`.
+- **Not done:** ~~the browser frontend~~ DONE in `8875d48` (see the commit message for what was
+  and was not verified). Remaining for the dashboard: the user's visual check in the browser.
 
 ## Lane detection v1 (done on synthetic frames only, 7 Nov 2026)
 - `LaneDetector` (numpy, no cv2): grayscale -> ROI -> large-window box background -> residual threshold at ±3.5·robust sigma (3x3 high-pass MAD) -> per-band marking centroids -> weighted quadratic fit -> offset at the lookahead row, curvature, confidence. Auto polarity picks light or dark markings.
@@ -80,10 +81,11 @@ Pure viewer + control channel. `lane.py`, `lane_policy.py` and `app.py` are unto
 - Offline runner smoke-tested on a synthetic video: 120/120 frames detected, mean 8.3 ms/frame on the laptop (Jetson latency NOT measured).
 - **Uncalibrated:** `px_per_m=130` and `bottom_row_m=0.3` are guesses. Offset/curvature are only exact at the lookahead row. Known weakness: a low camera makes near markings thick relative to the 75 px background window. Validate on real recordings before trusting the numbers.
 
-## Current task: finish the web dashboard (subtasks 3-5), then real recordings
-1. Browser frontend for the dashboard (subtasks 3-5 of `docs/PROGRESS.md`): 3D arena + car,
-   camera panel with the detector overlay, debug numbers, controls wired to `POST /control`.
-   Backend is done and tested; only `static/` is left. Visual verification stays with the user.
+## Current task: the user's visual check of the dashboard, then real recordings
+1. Visual check of the web dashboard (user task): run `scripts/run.sh sim curve --dashboard`,
+   open http://127.0.0.1:8000, and confirm the arena matches the world, the overlay matches
+   the numbers, and the full control loop works (select scenario -> start -> emergency ->
+   start again (resume) -> reset). Everything else about the dashboard is done and tested.
 
 ## Next task: lane detection from real recordings
 1. Record real video from the robot camera on the Jetson, headless. Do not rely on hardware H.264 encoding; saving frames or MJPG via `cv2.VideoWriter` is safer. Camera is CSI (Raspberry Pi module); bring-up commands are in `docs/hardware.md`. **(user task)**
