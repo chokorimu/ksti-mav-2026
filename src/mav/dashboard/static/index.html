@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MAV Dashboard</title>
+<!--
+Front-end only. Open with ?mock=1 to preview without a backend.
+Backend contract (JSON unless noted), served from the same origin:
+  GET  /stream.mjpg[?overlay=1]      MJPEG camera (sim: simulated frames)
+  WS   /ws                           telemetry, ~10 Hz: {state, profile, checkpoints, fps, latency_ms,
+                                     temp_c, power_mode, violations, cmd:{speed,curvature},
+                                     out:{...hardware values}, extra:{...}, recording:{on,frames}, log:[...]}
+  POST /api/profile {profile}        sim|prototype|final (backend must refuse while RUN)
+  POST /api/start | /api/estop | /api/reset   (reset = new_attempt, refuse while RUN)
+  POST /api/record {on, session}
+  GET  /api/config/{name}            text/plain YAML (sim, prototype, final, vehicle)
+  PUT  /api/config/{name}            text/plain; backend validates, writes file, replies with a message;
+                                     MUST refuse while RUN
+SAFETY: this is NOT the physical e-stop. Competition rule 5.6 bans communication during a run, so the
+final profile must not start this server during an attempt.
+-->
+<style>
+:root{--bg:#f4f5f7;--panel:#fff;--ink:#16181d;--mute:#667085;--line:#d9dde3;--accent:#2457d6;--ok:#13795b;--warn:#b54708;--bad:#c4262e;color-scheme:light}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1115;--panel:#181b21;--ink:#e8eaee;--mute:#98a2b3;--line:#2b303a;--accent:#7aa2ff;--ok:#4cc9a0;--warn:#f0a05a;--bad:#d13438;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
+h1{font-size:16px;margin:0 8px 0 0}
+.pill{padding:2px 10px;border-radius:99px;border:1px solid var(--line);font-weight:600;font-size:12px}
+.pill.ok{color:var(--ok);border-color:var(--ok)}.pill.bad{color:var(--bad);border-color:var(--bad)}.pill.warn{color:var(--warn);border-color:var(--warn)}
+.seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-left:auto}
+.seg label{padding:6px 16px;cursor:pointer;font-weight:600}
+.seg input{position:absolute;opacity:0}
+.seg input:checked+span{color:var(--accent)}
+.seg label:has(input:checked){background:color-mix(in srgb,var(--accent) 16%,transparent)}
+.seg label:has(input:disabled){opacity:.45;cursor:not-allowed}
+#banner{display:none;padding:8px 16px;background:var(--warn);color:#fff;font-weight:600}
+main{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:12px;padding:12px 16px;max-width:1400px;margin:auto}
+section{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;min-width:0}
+h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--mute);margin:0 0 8px}
+.cam{grid-row:span 2}
+.view{position:relative;background:#000;border-radius:6px;aspect-ratio:16/9;overflow:hidden}
+.view img{width:100%;height:100%;object-fit:contain;display:block}
+#nocam{position:absolute;inset:0;display:grid;place-items:center;color:#9aa4b2}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px;color:var(--mute)}
+.ctrl{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
+button{font:inherit;font-weight:600;padding:10px 14px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer}
+button:disabled{opacity:.45;cursor:not-allowed}
+button:focus-visible,select:focus-visible,textarea:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+#start{background:var(--ok);border-color:var(--ok);color:#fff}
+#estop{grid-column:1/-1;background:var(--bad);border-color:var(--bad);color:#fff;font-size:20px;padding:18px}
+.hint{color:var(--mute);font-size:12px;margin:8px 0 0}
+dl{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:0}
+dt{color:var(--mute)}dd{margin:0;text-align:right;font-variant-numeric:tabular-nums;font-family:ui-monospace,Menlo,Consolas,monospace}
+input[type=text],select,textarea{width:100%;font:inherit;padding:8px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+textarea{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;min-height:220px;resize:vertical;margin-top:8px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.row>*{flex:1}.row>button{flex:0 0 auto}
+.wide{grid-column:1/-1}
+#rec.on{background:var(--bad);border-color:var(--bad);color:#fff}
+pre{margin:0;max-height:180px;overflow:auto;font:12px/1.4 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap}
+.err{color:var(--bad)}
+@media(max-width:900px){main{grid-template-columns:1fr}.cam{grid-row:auto}.seg{margin-left:0}}
+</style>
+</head>
+<body>
+<header>
+  <h1>MAV Control</h1>
+  <span id="state" class="pill">BOOT</span>
+  <span id="link" class="pill bad">offline</span>
+  <fieldset class="seg" id="profile" style="border:1px solid var(--line);padding:0;margin-left:auto" aria-label="Profile">
+    <label><input type="radio" name="p" value="sim"><span>sim</span></label>
+    <label><input type="radio" name="p" value="prototype" checked><span>prototype</span></label>
+    <label><input type="radio" name="p" value="final"><span>final</span></label>
+  </fieldset>
+</header>
+<div id="banner">FINAL: for pre-run checks only. No network or dashboard is allowed while the robot runs in competition.</div>
+
+<main>
+  <section class="cam">
+    <h2 id="camcap">Camera</h2>
+    <div class="view"><img id="cam" alt="Camera stream"><div id="nocam">No stream</div></div>
+    <div class="bar"><label><input type="checkbox" id="ov"> debug overlay</label><span id="res">-</span><span id="fps">-</span></div>
+    <div class="ctrl">
+      <button id="start">Start</button>
+      <button id="reset">Reset attempt</button>
+      <button id="estop">EMERGENCY STOP (Esc)</button>
+    </div>
+    <p class="hint">Not a substitute for the physical emergency stop. Reset clears the checkpoint count (new attempt); a restart after a violation must use Start, not Reset.</p>
+  </section>
+
+  <section>
+    <h2>Debug</h2>
+    <dl id="tele"></dl>
+  </section>
+
+  <section>
+    <h2>Dataset recording</h2>
+    <div class="row"><input type="text" id="session" placeholder="session name (e.g. white-bright-01)" aria-label="Session name"><button id="rec">Record</button></div>
+    <p class="hint" id="recinfo">Not recording.</p>
+  </section>
+
+  <section class="wide">
+    <h2>Config (repo files)</h2>
+    <div class="row">
+      <select id="cfgname" aria-label="Config file"><option>sim</option><option>prototype</option><option>final</option><option>vehicle</option></select>
+      <button id="load">Load</button><button id="save">Save &amp; apply</button><button id="revert">Revert</button>
+    </div>
+    <textarea id="cfg" spellcheck="false" aria-label="YAML"></textarea>
+    <p class="hint" id="cfgmsg">Editing is locked while the robot is running.</p>
+  </section>
+
+  <section class="wide"><h2>Log</h2><pre id="log"></pre></section>
+</main>
+
+<script>
+const $=s=>document.querySelector(s), MOCK=new URLSearchParams(location.search).has('mock');
+const S={state:'BOOT',profile:'prototype',rec:false,orig:'',last:0,m:{cp:0}};
+const fmt=v=>typeof v==='number'?(Number.isInteger(v)?v:v.toFixed(3)):String(v);
+function log(t,c){const p=$('#log'),d=document.createElement('div');if(c)d.className=c;d.textContent=new Date().toLocaleTimeString()+' '+t;p.append(d);while(p.childElementCount>200)p.firstChild.remove();p.scrollTop=1e9}
+function link(on){const e=$('#link');e.textContent=on?'live':'offline';e.className='pill '+(on?'ok':'bad')}
+function applyState(){
+  const run=S.state==='RUN', e=$('#state');
+  e.textContent=S.state;e.className='pill '+(run?'ok':S.state==='STOPPED'?'bad':'warn');
+  $('#start').disabled=run||!['WAIT_START','STOPPED'].includes(S.state);
+  $('#reset').disabled=run;$('#save').disabled=run;
+  document.querySelectorAll('#profile input').forEach(i=>{i.disabled=run;i.checked=i.value===S.profile});
+  $('#banner').style.display=S.profile==='final'?'block':'none';
+  $('#camcap').textContent=S.profile==='sim'?'Camera (simulated)':'Camera (real)';
+}
+function render(t){
+  S.last=Date.now();link(true);
+  if(t.state)S.state=t.state;if(t.profile)S.profile=t.profile;applyState();
+  const rows=[['state',S.state],['profile',S.profile],['checkpoints',t.checkpoints],['violations',t.violations],
+    ['speed cmd (m/s)',t.cmd&&t.cmd.speed],['curvature cmd (1/m)',t.cmd&&t.cmd.curvature],
+    ['latency (ms)',t.latency_ms],['temp (C)',t.temp_c],['power mode',t.power_mode]];
+  for(const[k,v]of Object.entries(t.out||{}))rows.push(['out.'+k,v]);
+  for(const[k,v]of Object.entries(t.extra||{}))rows.push([k,v]);
+  $('#tele').innerHTML=rows.filter(r=>r[1]!=null).map(r=>`<dt>${r[0]}</dt><dd>${fmt(r[1])}</dd>`).join('');
+  $('#fps').textContent=t.fps!=null?fmt(t.fps)+' fps':'-';
+  const r=t.recording;if(r){S.rec=r.on;$('#rec').classList.toggle('on',r.on);$('#rec').textContent=r.on?'Stop recording':'Record';$('#recinfo').textContent=r.on?`Recording: ${r.frames} frames`:'Not recording.'}
+  (t.log||[]).forEach(l=>log(l));
+}
+async function post(path,body){
+  if(MOCK)return mockPost(path,body);
+  try{const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})});
+    if(!r.ok)throw new Error(r.status+' '+await r.text());log('OK '+path);return true}
+  catch(e){log('ERR '+path+': '+e.message,'err');return false}
+}
+$('#estop').onclick=()=>post('/api/estop');
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();post('/api/estop')}});
+$('#start').onclick=()=>post('/api/start');
+$('#reset').onclick=()=>{if(confirm('Reset starts a NEW attempt and clears the checkpoint count. Continue?'))post('/api/reset')};
+document.querySelectorAll('#profile input').forEach(i=>i.onchange=async()=>{
+  if(!confirm(`Switch to ${i.value}? The pipeline will restart.`)){applyState();return}
+  if(!await post('/api/profile',{profile:i.value}))applyState();else{S.profile=i.value;applyState()}});
+$('#rec').onclick=()=>post('/api/record',{on:!S.rec,session:$('#session').value.trim()});
+$('#ov').onchange=camSrc;
+function camSrc(){$('#cam').src=MOCK?'':'/stream.mjpg'+($('#ov').checked?'?overlay=1':'')}
+$('#cam').onload=()=>{$('#nocam').style.display='none';$('#res').textContent=$('#cam').naturalWidth+'x'+$('#cam').naturalHeight};
+$('#cam').onerror=()=>{$('#nocam').style.display='grid'};
+async function load(){
+  const n=$('#cfgname').value;
+  try{const t=MOCK?`# mock ${n}.yaml\nprofile: ${n}\n`:await(await fetch('/api/config/'+n)).text();
+    $('#cfg').value=S.orig=t;$('#cfgmsg').textContent='Loaded '+n+'.yaml'}
+  catch(e){log('ERR load '+n+': '+e.message,'err')}
+}
+$('#load').onclick=load;$('#cfgname').onchange=load;
+$('#revert').onclick=()=>{$('#cfg').value=S.orig};
+$('#save').onclick=async()=>{
+  const n=$('#cfgname').value;if(!confirm(`Overwrite configs/${n}.yaml in the repo and apply?`))return;
+  if(MOCK){S.orig=$('#cfg').value;$('#cfgmsg').textContent='[mock] saved';return}
+  try{const r=await fetch('/api/config/'+n,{method:'PUT',headers:{'Content-Type':'text/plain'},body:$('#cfg').value});
+    const m=await r.text();$('#cfgmsg').textContent=(r.ok?'Saved: ':'Rejected: ')+m;if(r.ok)S.orig=$('#cfg').value;log((r.ok?'config saved ':'config rejected ')+n,r.ok?'':'err')}
+  catch(e){log('ERR save: '+e.message,'err')}
+};
+function connect(){
+  const ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws');
+  ws.onopen=()=>log('connected');ws.onclose=()=>{link(false);setTimeout(connect,1500)};
+  ws.onmessage=e=>{try{render(JSON.parse(e.data))}catch(x){}};
+}
+setInterval(()=>{if(S.last&&Date.now()-S.last>1500)link(false)},500);
+/* mock mode: fake state machine + telemetry */
+function mockPost(p,b){log('[mock] POST '+p);
+  if(p.endsWith('start')&&['WAIT_START','STOPPED'].includes(S.state))S.state='RUN';
+  else if(p.endsWith('estop'))S.state='STOPPED';
+  else if(p.endsWith('reset')){S.state='WAIT_START';S.m.cp=0}
+  else if(p.endsWith('profile'))S.profile=b.profile;
+  else if(p.endsWith('record'))S.rec=b.on;
+  return true}
+function mock(){S.state='WAIT_START';let f=0;
+  setInterval(()=>{const run=S.state==='RUN';if(run&&Math.random()<.05)S.m.cp++;if(run)f++;
+    render({state:S.state,profile:S.profile,checkpoints:S.m.cp,violations:0,fps:run?29.7:0,latency_ms:run?42:null,temp_c:51.2,power_mode:'MAXN_SUPER',
+      cmd:{speed:run?.5:0,curvature:run?Math.sin(f/20):0},out:{steer_rad:run?Math.sin(f/20)*.2:0},recording:{on:S.rec,frames:S.rec?f:0}})},100)}
+camSrc();applyState();load();MOCK?mock():connect();
+</script>
+</body>
+</html>
