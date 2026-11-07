@@ -58,6 +58,18 @@ the shared core is compiled into both.
 
 Requires `pip install platformio` (in `requirements-dev.txt`).
 
+One script does compile + upload. Run it on the laptop with the Uno over
+USB (the AVR toolchain is x86_64 and is not verified on the Jetson):
+
+```
+scripts/flash_firmware.sh <prototype|final> [--port /dev/ttyACM0]
+```
+
+It auto-detects the port when exactly one Uno is plugged in;
+`--compile-only` builds without uploading, `--list-ports` shows the
+candidates, and everything after `--` is passed to `pio run`. The raw
+PlatformIO commands, if you need them:
+
 ```
 cd firmware/arduino/prototype
 pio run                  # compile

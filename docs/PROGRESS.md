@@ -256,7 +256,10 @@ Split into 4 subtasks (one at a time, commit after each):
    COMPILE for the Uno (prototype 4966 B flash / 276 B RAM, final 5532 B /
    317 B); pin maps and L298N output stages written. Still open: servo model +
    range (final), the servo 5 V BEC, and the wheels-lifted m/s->PWM
-   calibration (both).
+   calibration (both). Flash tooling DONE 7 Nov 2026:
+   `scripts/flash_firmware.sh <prototype|final>` (compile + upload, port
+   auto-detect, `--compile-only`/`--list-ports`/`--port`); tested end-to-end
+   except the physical upload (no Uno was plugged in at the time).
 6. Checkpoint / start-finish line detection. Not started. Split into subtasks before coding.
 7. ~~Web-simulator bridge~~ replaced by the web dashboard for the synthetic sim (current
    task above). The external web simulator is no longer needed; Q5 closed.

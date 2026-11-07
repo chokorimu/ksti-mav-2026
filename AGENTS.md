@@ -142,5 +142,6 @@ Run all commands from the repo root. Use bash.
 - Run on Jetson: `scripts/run.sh prototype` (debug on) or `scripts/run.sh final` (no debug, no network). Use the same `sudo nvpmodel` mode as the competition.
 - Tests: `source .venv/bin/activate && pytest` (on the Jetson install pytest first: `pip install pytest`, or `sudo apt install python3-pytest`)
 - Firmware core unit test (laptop, no Arduino needed): `scripts/test_firmware_core.sh` (g++ build + run of `firmware/arduino/lib/MavCore/test/test_protocol.cpp`)
+- Flash firmware (laptop, Uno over USB): `scripts/flash_firmware.sh <prototype|final>` (port auto-detect; `--compile-only` / `--list-ports` / `--port` available)
 - Firmware build/flash (Arduino Uno, needs `pip install platformio`): `cd firmware/arduino/prototype && pio run` (compile), `pio run -t upload` (flash), `pio device monitor` (serial 115200); same three in `final/`
 - Check JetPack (on the Jetson, before any version-dependent install): `cat /etc/nv_tegra_release` and `apt show nvidia-jetpack`
