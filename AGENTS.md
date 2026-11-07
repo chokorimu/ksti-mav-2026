@@ -39,6 +39,23 @@ Select via configuration, not by editing code.
 
 `final` rules: no network server, streaming, or SSH dependency while the robot runs. It starts automatically at boot and waits for the physical start button.
 
+## Perception config (per profile)
+
+Perception parameters live in `configs/<profile>.yaml`, not in code:
+
+| Section | Holds | Why it is config |
+|---|---|---|
+| `lane:` | `px_per_m`, `bottom_row_m`, `roi_top`, `max_band_span_m` | the camera mount is not fixed, so a camera move is a config edit |
+| `checkpoint:` | hue bands + geometry | marking colours must not be hardcoded **[A11]** |
+
+`src/mav/config.py` loads them (`load_lane_config(profile)`,
+`load_checkpoint_config(profile)`); an omitted key keeps the dataclass default.
+`python -m mav` validates both sections at boot, so a typo fails there with the
+offending key named instead of silently mid-run. `sim.yaml` carries a `lane:`
+section for reference only (the runner derives its own from `WorldConfig`) and
+no `checkpoint:` section (hues come from the rendered scenario colours);
+`final.yaml` has neither `dashboard:` nor `sim:`, so it cannot start a server.
+
 ## Hard constraints from the competition (no design may violate these)
 - Infrared sensors and line followers are banned. Do not add sensors other than the camera without organizer confirmation **[A5]**.
 - Any communication to control the robot during a run is banned, wireless or wired.
@@ -77,6 +94,11 @@ tests/
 - `src/mav/control/mapping.py`: `DifferentialMapper` (prototype) and `AckermannMapper` (final).
 - `src/mav/control/state_machine.py`: BOOT/WAIT_START/RUN/STOPPED; resume after emergency keeps the checkpoint count.
 - `src/mav/app.py`: `step()`, one loop iteration shared by sim, prototype and final.
+- `src/mav/config.py`: `load_lane_config()` / `load_checkpoint_config()` map the
+    `lane:` and `checkpoint:` sections of `configs/<profile>.yaml` onto `LaneConfig` /
+    `CheckpointConfig` (unknown keys, bad hue bands and out-of-range values raise;
+    `null` disables an optional gate). `python -m mav` validates both sections at
+    startup. Tests: `tests/test_config.py`.
 - `src/mav/perception/lane.py`: LaneDetector (numpy-only), offline runner
     `PYTHONPATH=src python -m mav.perception.lane <video> [--overlay out.mp4]`.
 - `src/mav/planning/lane_policy.py`: LanePolicy (measurement -> Command, pure-pursuit). Both have tests on synthetic frames.

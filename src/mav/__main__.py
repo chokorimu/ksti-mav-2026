@@ -24,6 +24,16 @@ def main() -> None:
     cfg = yaml.safe_load(path.read_text())
     print(f"profil: {profile}")
     print(cfg)
+    # Validate the perception sections here: a typo in configs/ must fail at
+    # boot with a clear message, not silently halfway around the track.
+    from mav.config import load_checkpoint_config, load_lane_config
+
+    lane = load_lane_config(profile)
+    cp = load_checkpoint_config(profile)
+    print(f"lane      : px_per_m={lane.px_per_m} bottom_row_m={lane.bottom_row_m} "
+          f"roi_top={lane.roi_top}")
+    print(f"checkpoint: hues={cp.checkpoint_hues} "
+          f"finish={cp.finish_hues or 'disabled [A11]'}")
 
 
 if __name__ == "__main__":

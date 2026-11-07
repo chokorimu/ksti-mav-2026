@@ -225,8 +225,23 @@ Split into 4 subtasks (one at a time, commit after each):
       config: s-positions + colours), wire the tracker into `run_sim()`.
       Done when: a closed-loop sim run passes N checkpoints and the count is N,
       and emergency+resume mid-run keeps it.
-- [ ] 4. Config + docs: `checkpoint:` section in configs/ (colours + geometry,
+- [x] 4. Config + docs: `checkpoint:` section in configs/ (colours + geometry,
       defaults marked unconfirmed), AGENTS.md/PROGRESS.md updates.
+      Done when: every shipped profile parses, a bad key/value fails loudly, and
+      the camera geometry is reachable without touching code.
+      DONE 7 Nov 2026: new `src/mav/config.py` (`load_lane_config()`,
+      `load_checkpoint_config()`; unknown keys / bad hue bands / out-of-range
+      values raise, `null` disables an optional gate). `configs/prototype.yaml`
+      and `configs/final.yaml` carry `lane:` (px_per_m 130, bottom_row_m 0.3,
+      both UNCALIBRATED - the phone recording measures 964-1610 px/m, i.e. the
+      default is ~10x off for that viewpoint) and `checkpoint:` (checkpoint hue
+      90-150 deg green UNCONFIRMED [A11], finish disabled). `configs/sim.yaml`
+      has a reference-only `lane:` (the runner derives its own from WorldConfig)
+      and no `checkpoint:` (hues come from the rendered scenario colours).
+      `python -m mav` validates both sections at boot. 14 new tests
+      (`tests/test_config.py`); full suite 160 passed (laptop). Only subtask 3
+      remains, and it is the user's in-progress work (render.py/lane.py/runner.py
+      /scenarios.py/world.py uncommitted - not touched here).
 
 ## Next tasks (in order)
 
@@ -241,8 +256,14 @@ Split into 4 subtasks (one at a time, commit after each):
    dim + bright light, dashed centre line, a checkpoint, start/finish. Done when: the
    clips exist and play back.
 3. Run the detector offline on the recordings; recalibrate `px_per_m` and `bottom_row_m`
-   (currently uncalibrated guesses: 130.0 / 0.3). Blocked by task 2.
+   (currently uncalibrated guesses: 130.0 / 0.3, now per-profile config in
+   `configs/<profile>.yaml` - edit there, not in code). Blocked by task 2.
    Done when: offsets/curvatures on recordings look sane and the constants are measured.
+   Partial input already in hand: the phone recording in `data/recordings/` measures
+   964-1610 px/m (lane 0.5 m wide = 482-805 px on screen) and gets 0% detection with
+   the 130 default - the band gate correctly rejects every band as "smeared". That
+   viewpoint is NOT the robot camera, so it proves the scale is wrong, not what the
+   right value is.
 4. Measure per-frame latency on the Jetson (`tegrastats` + the runner's latency printout).
    Blocked by task 2. Done when: mean/p95 ms per frame recorded in this file.
 5. ~~`SerialActuator` (host side)~~ DONE 7 Nov 2026, commit `c75c7d0`: protocol v1 in
