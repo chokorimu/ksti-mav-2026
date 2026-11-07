@@ -2,34 +2,86 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>MAV sim dashboard (placeholder)</title>
-<style>
-  body { font: 14px/1.5 monospace; background: #111; color: #ddd; margin: 0; padding: 16px; }
-  h1 { font-size: 16px; }
-  #out { white-space: pre-wrap; }
-</style>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MAV sim dashboard &mdash; KSTI 2026</title>
+<link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-<h1>MAV sim dashboard &mdash; placeholder</h1>
-<p>The real 3D arena / camera panel / controls are subtasks 3&ndash;5. This page only
-proves the HTTP pipe works from a browser.</p>
-<pre id="out">loading&hellip;</pre>
-<script type="module">
-const out = document.getElementById('out');
-async function tick() {
-  try {
-    const [state, lane, scenarios] = await Promise.all([
-      fetch('/state.json').then(r => r.json()),
-      fetch('/lane.json').then(r => r.json()),
-      fetch('/scenarios').then(r => r.json()),
-    ]);
-    out.textContent = JSON.stringify({ state, lane_points: lane.lane.length, scenarios }, null, 1);
-  } catch (e) {
-    out.textContent = 'error: ' + e;
-  }
-  setTimeout(tick, 200);
-}
-tick();
-</script>
+<div class="app">
+
+  <header class="bar">
+    <div class="title">MAV sim dashboard <span class="sub">1:10 autonomous vehicle &middot; KSTI 2026</span></div>
+    <div class="status" id="status">
+      <span class="chip" id="chip-ready">ready: ?</span>
+      <span class="chip" id="chip-state">state: ?</span>
+      <span class="chip" id="chip-cp">checkpoints: ?</span>
+      <span class="chip" id="chip-scenario">scenario: ?</span>
+      <span class="chip" id="chip-fps">fps: ?</span>
+    </div>
+  </header>
+
+  <section class="panel arena" id="arena-panel">
+    <div class="panel-head">
+      <h2>Arena &mdash; top view (world metres)</h2>
+      <button id="btn-fit" class="btn small" type="button">fit whole track</button>
+    </div>
+    <div class="arena-view" id="arena-view">
+      <canvas id="arena"></canvas>
+      <div class="arena-overlay" id="arena-waiting">waiting for the simulator&hellip;</div>
+      <div class="arena-hud" id="arena-hud">
+        <span>+X right &middot; +Y forward &middot; &theta; left-positive</span>
+        <span id="hud-pose">pose --</span>
+      </div>
+    </div>
+  </section>
+
+  <div class="side">
+
+    <section class="panel">
+      <div class="panel-head"><h2>Camera + detector overlay</h2></div>
+      <div class="cam-wrap" id="cam-wrap">
+        <img id="frame" alt="camera frame" src="/frame.jpg?w=640">
+        <canvas id="overlay"></canvas>
+        <div class="cam-msg" id="cam-msg" hidden></div>
+      </div>
+      <div class="legend">
+        <span><i class="sw det"></i>detected fit / centre</span>
+        <span><i class="sw tru"></i>true centre</span>
+        <span><i class="sw band"></i>band centroids</span>
+        <span><i class="sw roi"></i>ROI top / lookahead row</span>
+      </div>
+      <div class="cam-nums" id="cam-nums">
+        <span>px/m <b id="pxm">--</b></span>
+        <span>lookahead row <b id="lk-row">--</b></span>
+        <span>detected x <b id="lk-x">--</b></span>
+        <span>true x <b id="lk-true">--</b></span>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>Controls</h2></div>
+      <div class="controls">
+        <button id="btn-start" class="btn go" type="button">START</button>
+        <button id="btn-emergency" class="btn stop" type="button">EMERGENCY</button>
+        <button id="btn-reset" class="btn" type="button">RESET</button>
+      </div>
+      <div class="controls">
+        <label for="sel-scenario">scenario</label>
+        <select id="sel-scenario"><option value="">loading&hellip;</option></select>
+      </div>
+      <p class="hint">After EMERGENCY the robot is STOPPED; START again RESUMES (checkpoints survive).
+        A scenario switch or RESET returns the robot to WAIT_START.</p>
+      <div class="reply" id="control-reply">&nbsp;</div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><h2>Debug numbers</h2></div>
+      <div class="nums" id="nums"></div>
+    </section>
+
+  </div>
+</div>
+
+<script type="module" src="/static/app.js"></script>
 </body>
 </html>
