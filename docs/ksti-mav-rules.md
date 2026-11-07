@@ -1,134 +1,132 @@
-# KSTI 2026 – Mini Autonomous Vehicle: Aturan Lomba
+# KSTI 2026 – Mini Autonomous Vehicle: Competition Rules
 
-Sumber: `GUIDEBOOK_PESERTA_MINI_AUTONOMOUS_VEHICLE_KSTI_2026.pdf` (Bab I–IV).
-Dokumen ini adalah transkripsi terstruktur, bukan sumber resmi. Jika berbeda dengan PDF atau
-pengumuman panitia, **panitia yang benar**. Poin bertanda **[A#]** punya catatan di bagian
-"Ambiguitas" di bawah. Jangan menebak poin tersebut; tanyakan ke pengguna atau narahubung.
+Source: `GUIDEBOOK_PESERTA_MINI_AUTONOMOUS_VEHICLE_KSTI_2026.pdf` (Chapters I–IV).
+This document is a structured transcription, not an official source. If it differs from the PDF or from organizer announcements, **the organizer is correct**. Items marked **[A#]** have notes in the "Ambiguities" section at the end. Do not guess those items; ask the user or the organizer contact.
 
-## 1. Informasi kegiatan
+## 1. Event information
 
-- Nama: Mini Autonomous Vehicle, bagian dari Robotics Competition at KSTI 2026.
-- Tanggal/tempat: 12 November 2026, luring, Hall Robotika ITS, Surabaya.
-- Technical Meeting: 8 November 2026 (pengumuman peserta terdaftar dan pembagian grup).
-- Pendaftaran: https://its-robotics.com/ (pilih KSTI 2026, kategori Mini Autonomous Vehicle).
-- Biaya: Rp150.000 (batch 1), Rp175.000 (batch 2). Tidak dapat dikembalikan kecuali lomba dibatalkan.
-- Verifikasi pendaftaran paling lambat 2x24 jam sejak submisi.
-- Informasi resmi hanya lewat platform pendaftaran dan media sosial resmi Robotics Competition at KSTI 2026.
+- Name: Mini Autonomous Vehicle, part of Robotics Competition at KSTI 2026.
+- Date/venue: 12 November 2026, on-site, Robotics Hall ITS, Surabaya.
+- Technical Meeting: 8 November 2026 (announcement of registered teams and group assignments).
+- Registration: https://its-robotics.com/ (choose KSTI 2026, category Mini Autonomous Vehicle).
+- Fee: Rp150,000 (batch 1), Rp175,000 (batch 2). Non-refundable unless the competition is cancelled.
+- Registration verification within 2x24 hours of submission.
+- Official information is only shared through the official registration platform and official social media accounts of Robotics Competition at KSTI 2026.
 
-## 2. Persyaratan tim
+## 2. Team requirements
 
-- Peserta adalah mahasiswa (bukti kartu tanda mahasiswa). Jumlah tim per instansi tidak dibatasi.
-- Maksimal 5 orang per tim, 1 ketua. Setiap peserta dan robot hanya boleh di satu tim.
-- Nama tim/robot tidak boleh mengandung SARA, pornografi, penghinaan, pelecehan. Nama kembar: yang administrasinya selesai lebih dulu berhak. **[A4]**
+- Participants must be students (proof: student ID card). No limit on number of teams per institution.
+- Maximum 5 members per team, 1 team leader. Each participant and robot may only belong to one team.
+- Team or robot names must not contain SARA (ethnic, religious, racial, group issues), pornography, insults, harassment. If two teams have the same name, the team that completed administration first gets the name. **[A4]**
 
-## 3. Hadiah
+## 3. Prizes
 
-| Predikat | Hadiah |
+| Rank | Prize |
 |---|---|
-| Juara 1 | Medali Emas + Sertifikat + uang pembinaan (tertulis `Rp4.00.000,00`) **[A3]** |
-| Juara 2 | Medali Perak + Sertifikat + uang pembinaan (tertulis `Rp3.00.000,00`) |
-| Juara 3 | Medali Perunggu + Sertifikat + uang pembinaan (tertulis `Rp2.00.000,00`) |
+| 1st place | Gold medal + certificate + cash prize (written as `Rp4.00.000,00`) **[A3]** |
+| 2nd place | Silver medal + certificate + cash prize (written as `Rp3.00.000,00`) |
+| 3rd place | Bronze medal + certificate + cash prize (written as `Rp2.00.000,00`) |
 
-## 4. Misi
+## 4. Missions
 
-- **Autonomous Race (AR):** navigasi dari start ke finish pada lintasan yang disediakan dengan waktu secepat-cepatnya.
-- **Autonomous Race Challenge (ARC):** sama seperti AR, tetapi sambil menghindari rintangan (obstacle). Opsional, hanya untuk tim yang lolos final.
+- **Autonomous Race (AR):** navigate from start to finish on the prepared track as fast as possible.
+- **Autonomous Race Challenge (ARC):** same as AR, but avoid obstacles along the way. Optional, only for teams that qualified for the final.
 
-## 5. Ketentuan robot
+## 5. Robot requirements
 
-### 5.1 Umum
-- Mobil bertenaga listrik skala 1:10. Bahan bakar dilarang keras.
-- Minimal satu gandar kemudi (steering axle).
-- Wajib ada **tombol fisik emergency stop** yang mudah dijangkau, dan **tombol lain untuk memulai navigasi**.
-- Satu tim hanya boleh satu mobil/satu platform. Ganti platform dilarang; modifikasi komponen untuk perbaikan boleh.
+### 5.1 General
+- Electric car at 1:10 scale. Fuel-powered vehicles are strictly prohibited.
+- At least one steering axle.
+- Must have a **physical emergency stop button** within easy reach, and **another button to start navigation**.
+- One car or one platform per team. Changing the platform is banned; modifying components for repair is allowed.
 
-### 5.2 Tenaga
-- Harus listrik. Tidak ada batasan jumlah maupun kapasitas baterai.
+### 5.2 Power
+- Must be electric. No limit on number or capacity of batteries.
 
-### 5.3 Penggerak dan kemudi
-- 4WD atau 2WD boleh.
-- Dilarang roda omni, mecanum, atau konfigurasi lain yang memungkinkan gerak ke segala arah.
-- "Robot harus mengimplementasi sistem penggerak diferensial." **[A1]**
-- Sistem steering bebas.
-- Bonus nilai untuk Ackermann steering (single-axle maupun two-axle): `STP = 0.25`. **[A1]**
+### 5.3 Drive and steering
+- 4WD and 2WD are allowed.
+- Omni wheels, mecanum wheels, or other configurations that allow motion in all directions are banned.
+- "The robot must implement a differential drive system." **[A1]**
+- Steering system is free.
+- Bonus for Ackermann steering (single-axle or two-axle): `STP = 0.25`. **[A1]**
 
-### 5.4 Dimensi
+### 5.4 Dimensions
 
-| Dimensi | Minimum | Maksimum |
+| Dimension | Minimum | Maximum |
 |---|---|---|
-| Lebar jejak roda (track width, pusat roda kiri-kanan pada gandar yang sama) | 130 mm | 350 mm |
-| Jarak sumbu roda (wheel base, pusat gandar depan-belakang) | 160 mm | 550 mm |
-| Tinggi (dari tanah ke titik tertinggi) | – | 450 mm |
-| Lebar (termasuk semua komponen/perangkat tambahan) | – | 400 mm |
-| Panjang (depan ke belakang, termasuk semua komponen) | – | 600 mm |
+| Track width (distance between left and right wheel centers on the same axle) | 130 mm | 350 mm |
+| Wheel base (distance between front and rear axle centers) | 160 mm | 550 mm |
+| Height (ground to highest point) | – | 450 mm |
+| Width (including all components and attached equipment) | – | 400 mm |
+| Length (front to back, including all components) | – | 600 mm |
 
-### 5.5 Sensor
-- **Dilarang:** sensor infrared dan/atau sensor line follower lainnya.
-- Sensor lain boleh, selain yang dapat menelusuri garis secara langsung. **[A5]**
+### 5.5 Sensors
+- **Banned:** infrared sensors and/or other line follower sensors.
+- Other sensors are allowed, except those that can directly follow the line. **[A5]**
 
-### 5.6 Komunikasi
-- Segala bentuk komunikasi (nirkabel maupun kabel) untuk mengendalikan atau berkomunikasi dengan robot **selama kompetisi berlangsung sangat dilarang**.
-- Artinya robot harus sepenuhnya otonom selama percobaan.
+### 5.6 Communication
+- Any communication (wireless or wired) used to control or talk to the robot **during the competition is strictly prohibited**.
+- The robot must be fully autonomous during runs.
 
-## 6. Lintasan
+## 6. Track
 
-- Warna marka dipilih menyesuaikan warna lantai arena, jadi tim harus bisa bekerja dengan marka putih maupun hitam.
-- Checkpoint ditunjukkan warna **hijau**; garis start/finish ditunjukkan warna **merah**. Namun checkpoint tidak harus punya marka apa pun, dan garis start/finish memakai warna berbeda dari marka jalan "namun belum tentu merah". **[A11]**
-- Lebar lintasan: 50 cm ± 10%, **tidak selalu sama** sepanjang lintasan.
-- Radius putar minimum (radius luar): 1,5 m ± 10%.
-- Marka: dua garis tepi lurus tanpa putus (putih atau hitam); satu marka jalur putus-putus dengan warna sama dengan garis tepi.
-- Lebar marka minimal 1 cm. Jarak antar segmen garis putus-putus minimal 5 cm.
-- Checkpoint diletakkan di sepanjang lintasan. Peta contoh ada di tautan "Lintasan" di PDF (tautan tidak ikut terekstrak). **[A9]**
+- Marking color is chosen to match the arena floor, so teams must work with both white and black markings.
+- Checkpoints are shown in **green**; the start/finish line is shown in **red**. However, checkpoints do not need any marking, and the start/finish line uses a color different from the track markings, "not necessarily red". **[A11]**
+- Track width: 50 cm ± 10%, **not necessarily constant** along the track.
+- Minimum turning radius (outer radius): 1.5 m ± 10%.
+- Markings: two straight continuous edge lines (white or black); one dashed center line in the same color as the edge lines.
+- Marking width at least 1 cm. Gap between dashes at least 5 cm.
+- Checkpoints are placed along the track. An example map is linked as "Lintasan" in the PDF (the link did not survive extraction). **[A9]**
 
-## 7. Aturan kompetisi – Autonomous Race
+## 7. Competition rules: Autonomous Race
 
-Ada 2 tahap: **Eliminasi** (harus capai skor minimum untuk lolos) dan **Final** (nilai murni dari kecepatan dan jumlah checkpoint). **[A9]**
+Two stages: **Elimination** (must reach a minimum score to advance) and **Final** (pure score from speed and number of checkpoints passed). **[A9]**
 
-1. Tim siap di area start 5 menit sebelum waktu percobaan.
-2. Tidak siap saat dipanggil = kesempatan gugur.
-3. 3 percobaan, masing-masing batas 5 menit. **Skor tertinggi** dari tiga percobaan dipakai.
-4. Tujuan: lewati garis finish secepat mungkin dengan melewati semua checkpoint dalam 5 menit.
-5. Jika 5 menit habis sebelum finish, tim wajib menghentikan mobil; poin dihitung dari progres.
-6. Waktu persiapan 10 menit antar percobaan. Boleh: penyesuaian kecil, kalibrasi sensor, tinjau strategi, perbaikan mobil.
-7. Checkpoint **wajib dilewati berurutan**. Jika tidak: pelanggaran; mobil dihentikan, dipindahkan ke checkpoint terakhir, lalu dijalankan lagi tanpa jeda waktu dari panitia.
-8. Mobil wajib berada di jalur (lajur kanan atau kiri, selama tidak melewati garis tepi). **Keluar jalur jika 30% bagian mobil keluar lintasan.** Dihitung pelanggaran; mobil dihentikan, dipindah ke checkpoint terakhir, dijalankan lagi tanpa jeda. **[A2]**
-9. Batas pelanggaran: 3 kali per percobaan. Lebih dari 3 kali = percobaan selesai. **[A6]**
-10. Ada bagian mobil yang lepas/copot = pelanggaran dan percobaan langsung selesai. **[A7]**
+1. Team must be ready at the start area 5 minutes before its run time.
+2. Not ready when called = the attempt is forfeited.
+3. 3 attempts, each with a 5-minute time limit. The **highest score** of the three attempts is used.
+4. Goal: cross the finish line as fast as possible, passing all checkpoints within 5 minutes.
+5. If 5 minutes end before finishing, the team must stop the car; points are counted from progress made.
+6. 10 minutes preparation time between attempts. Allowed: small adjustments, sensor calibration, reviewing strategy, car repairs.
+7. Checkpoints **must be passed in order**. If not: violation; the car is stopped, moved to the last checkpoint, and restarted with no time added by the organizer.
+8. The car must stay on the track (left or right lane, as long as it does not cross the edge lines). **The car is considered off track if 30% of its body is outside the track.** Counted as a violation; the car is stopped, moved to the last checkpoint, and restarted with no time added. **[A2]**
+9. Violation limit: 3 per attempt. More than 3 = the attempt ends. **[A6]**
+10. Any part of the car detaching or falling off = violation, and the attempt ends immediately. **[A7]**
 
-### Hukuman (penambahan waktu tempuh ke hasil akhir)
+### Penalties (added to the total time)
 
-Rumus umum: `tambahan_detik = k * T_stage / N_cp`, dengan `N_cp` = jumlah seluruh checkpoint.
+General formula: `added_seconds = k * T_stage / N_cp`, where `N_cp` is the total number of checkpoints.
 
-| Pelanggaran | k |
+| Violation | k |
 |---|---|
-| Tidak melewati checkpoint | 0.5 |
-| Bagian mobil lepas | 0.2 |
-| Keluar jalur | 0.8 |
+| Not passing a checkpoint | 0.5 |
+| Car part detached | 0.2 |
+| Leaving the track | 0.8 |
 
-## 8. Aturan kompetisi – Autonomous Race Challenge (ARC)
+## 8. Competition rules: Autonomous Race Challenge (ARC)
 
-Sama dengan AR, dengan perbedaan:
-- Hanya untuk tim yang lolos final; menambah nilai di final. Tim bebas mengambil atau tidak.
-- **Checkpoint adalah obstacle yang harus dihindari.** Menghindari obstacle dianggap melewati checkpoint.
-- Menabrak atau gagal menghindari obstacle = pelanggaran (mobil dihentikan, dipindah ke checkpoint terakhir, lanjut tanpa jeda).
-- Keluar jalur jika **50%** bagian mobil keluar lintasan. **[A2]**
-- Penalti: sama dengan tabel AR, tetapi baris pertama menjadi "menabrak atau tidak menghindari obstacle" (k = 0.5); bagian lepas k = 0.2; keluar jalur k = 0.8.
-- Batas 3 pelanggaran per percobaan, bagian lepas mengakhiri percobaan, 3 percobaan, 10 menit persiapan: sama dengan AR.
+Same as AR, with these differences:
+- Only for teams that qualified for the final; it adds points in the final. Teams may choose to take it or not.
+- **Checkpoints are obstacles to avoid.** Avoiding an obstacle counts as passing the checkpoint.
+- Hitting or failing to avoid an obstacle = violation (car stopped, moved to last checkpoint, restarted with no time added).
+- Off track if **50%** of the car is outside the track. **[A2]**
+- Penalties: same as the AR table, but the first row becomes "hitting or not avoiding an obstacle" (k = 0.5); detached part k = 0.2; leaving the track k = 0.8.
+- 3-violation limit per attempt, a detached part ends the attempt, 3 attempts, 10 minutes preparation: same as AR.
 
-## 9. Alur pertandingan
+## 9. Match flow
 
 ### Test Day
-- Terbuka bagi semua tim untuk menguji mobil; tidak dinilai. Jadwal diatur panitia. **[A9]**
-- Wajib patuhi protokol keselamatan, kembalikan perlengkapan ke posisi semula, dilarang merusak/memodifikasi perlengkapan kompetisi. Kerusakan dilaporkan ke penyelenggara.
+- Open to all teams to test their cars; not scored. Schedule set by the organizer. **[A9]**
+- Teams must follow all safety protocols, return equipment to its original position, and must not damage or modify competition equipment. Damage is reported to the organizer.
 
-### Perlombaan (eliminasi, final, challenge: alur sama)
-1. Tim dipanggil sesuai urutan dan langsung mendapat 10 menit persiapan.
-2. Setelah persiapan habis, langsung masuk 5 menit percobaan: tim meletakkan robot di garis start lalu **menekan tombol start**.
-3. Setelah tombol start ditekan, **tim tidak boleh menyentuh robot sama sekali**. Kontak = percobaan selesai.
-4. Saat terjadi pelanggaran, wasit menginstruksikan; tim segera **menekan tombol emergency**, meletakkan robot di checkpoint terakhir, lalu menekan tombol start lagi.
-5. Saat wasit menyatakan percobaan selesai, tim segera menekan tombol emergency.
+### Competition (elimination, final, challenge: same flow)
+1. Teams are called in order and immediately get 10 minutes of preparation.
+2. When preparation ends, the 5-minute attempt starts immediately: the team places the robot on the start line and **presses the start button**.
+3. After the start button is pressed, **the team must not touch the robot at all**. Contact = attempt ends.
+4. When the robot commits a violation, the referee announces it; the team must immediately **press the emergency button**, place the robot at the last checkpoint, and press start again.
+5. When the referee announces the attempt is finished, the team must immediately press the emergency button.
 
-## 10. Sistem penilaian
+## 10. Scoring
 
 ```
 S_AR  = (1 + max((T_stage - T_total) / T_stage, 0)) * cp
@@ -136,40 +134,40 @@ S_ARC = ((1 + max((T_stage - T_total) / T_stage, 0)) * cp) / (2 * Tcp)
 Total = S_AR * (1 + STP + S_ARC)
 ```
 
-- `T_stage`: batas waktu yang diberikan (5 menit per percobaan; asumsi 300 s). **[A9]**
-- `T_total`: total waktu tempuh, **termasuk** tambahan waktu penalti.
-- `cp`: jumlah checkpoint yang berhasil didapat. `Tcp`: total checkpoint di lintasan.
-- `STP = 0.25` jika memakai Ackermann steering, selain itu 0.
-- `S_ARC` hanya dihitung bila ikut challenge; jika tidak ikut, anggap 0. **[A8]**
+- `T_stage`: time limit given per attempt (5 minutes per attempt; assumed 300 s). **[A9]**
+- `T_total`: total time taken, **including** penalty time added.
+- `cp`: number of checkpoints successfully passed. `Tcp`: total checkpoints on the track.
+- `STP = 0.25` if using Ackermann steering, otherwise 0.
+- `S_ARC` is only computed if taking the challenge; if not taken, treat as 0. **[A8]**
 
-Catatan turunan (interpretasi, bukan teks panduan):
-- Bonus kecepatan: `(1 + max(...,0))` bernilai antara 1 dan 2. Jika `T_total >= T_stage`, nilainya 1, sehingga skor dasar sama dengan `cp`.
-- Jumlah checkpoint berpengaruh lebih besar daripada kecepatan; konsistensi lebih penting daripada ngebut.
+Derived notes (interpretation, not guidebook text):
+- Speed bonus: `(1 + max(...,0))` ranges from 1 to 2. If `T_total >= T_stage`, it equals 1, so the base score equals `cp`.
+- Number of checkpoints matters more than speed; consistency matters more than going fast.
 
-## 11. Ketentuan lain
+## 11. Other provisions
 
-- Keputusan juri dan wasit mutlak. Peserta wajib mengikuti arahan juri, wasit, panitia.
-- Protes: hanya oleh satu anggota tim, ke juri, sopan, segera setelah pertandingan selesai dan sebelum pertandingan berikutnya. Tidak boleh saat pertandingan berlangsung. Protes atas keputusan wasit terkait pelanggaran dan penilaian tidak diterima; protes hanya untuk dugaan pelanggaran ketentuan robot atau prosedur.
-- Etika: sportif, bersih, tertib. Panitia tidak bertanggung jawab atas kehilangan/kerusakan barang peserta.
-- Hal yang belum diatur ditentukan panitia dan juri (diumumkan di Technical Meeting atau kanal resmi). Panitia boleh mengubah ketentuan; perubahan diumumkan di platform pendaftaran dan media sosial resmi.
-- Dengan mendaftar, peserta dianggap menyetujui seluruh isi guidebook.
+- Decisions of the jury and referees are final. Participants must follow instructions from jury, referees, and organizers.
+- Protests: only by one team member, to the jury, politely, immediately after the match and before the next match begins. Not allowed during a match. Protests against referee decisions on violations and scoring are not accepted; protests are only for suspected violations of robot rules or procedure.
+- Ethics: sportsmanship, cleanliness, order. The organizer is not responsible for loss or damage of participants' belongings.
+- Matters not covered are decided by the organizer and jury (announced at the Technical Meeting or via official channels). The organizer may change the rules; changes are announced on the official registration platform and social media accounts.
+- By registering, participants agree to the full guidebook.
 
-## 12. Narahubung
+## 12. Contacts
 
 - Nindita: +62 896-4920-8124
 - Yuke: +62 857-5577-3985
 
-## 13. Ambiguitas dan kemungkinan salah ketik
+## 13. Ambiguities and possible typos
 
-Jika tugas bergantung pada salah satu poin ini, **jangan menebak**. Tanyakan ke pengguna atau narahubung.
+If a task depends on one of these points, **do not guess**. Ask the user or the organizer contact.
 
-- **A1 – Diferensial vs Ackermann.** 5.3c mewajibkan "sistem penggerak diferensial", tetapi 5.3e memberi bonus untuk Ackermann steering. Dugaan (belum terkonfirmasi): yang dimaksud adalah diferensial pada penggerak roda (differential gear/penggerak yang bisa menerima kecepatan roda berbeda), bukan differential steering. Konfirmasi ke panitia sebelum memutuskan arsitektur kemudi.
-- **A2 – Batas keluar jalur.** 30% di AR, 50% di ARC. Bisa jadi salah ketik. Untuk keamanan, rancang agar mobil tidak keluar sama sekali (anggap 30%).
-- **A3 – Bagian hadiah.** Judulnya menyebut "Humanoid Penalty Kick" (salinan dari kategori lain) dan nominal tertulis `Rp4.00.000,00` (kemungkinan Rp4.000.000 dst.).
-- **A4 – "KSTI 2025"** muncul di persyaratan peserta nomor 7; kemungkinan sisa dari edisi lama.
-- **A5 – Larangan sensor.** Jelas dilarang: infrared dan line follower. Kalimat berikutnya membingungkan. Guidebook tidak menyebut kamera secara eksplisit sebagai boleh/tidak, walaupun Bab I menyebut visi komputer. Status LiDAR, ultrasonik, IMU, dan encoder juga tidak disebut. Konfirmasi ke panitia sebelum bergantung pada sensor selain kamera.
-- **A6 – Penalti vs batas pelanggaran.** Penalti berupa tambahan detik, tetapi lebih dari 3 pelanggaran mengakhiri percobaan. Tidak jelas apakah pelanggaran ke-4 tetap dihukum, dan bagaimana skor dihitung pada percobaan yang berakhir paksa.
-- **A7 – Bagian lepas.** Dihitung pelanggaran dengan penalti (k = 0.2) sekaligus mengakhiri percobaan langsung. Keduanya tertulis.
-- **A8 – Skor jika tidak finish / tidak ikut ARC.** Nilai `T_total` untuk percobaan yang tidak finish tidak didefinisikan. Dugaan: `T_total >= T_stage` sehingga bonus kecepatan 0. Bila tidak ikut ARC, `S_ARC` dianggap 0.
-- **A9 – Data yang tidak ada.** Skor minimum eliminasi, jumlah checkpoint `N_cp`/`Tcp`, peta lintasan (hanya tautan), jadwal test day, tanggal batch 1/2.
-- **A11 – Warna start/finish.** Ditulis merah, lalu "belum tentu merah". Jangan hardcode warna garis start/finish maupun warna checkpoint tanpa konfirmasi; rancang agar parameter warna bisa diubah.
+- **A1 – Differential vs Ackermann.** 5.3c requires a "differential drive system", but 5.3e gives a bonus for Ackermann steering. Hypothesis (unconfirmed): it means a differential in the drive system (wheels that can turn at different speeds), not differential steering. Confirm with the organizer before deciding the steering architecture.
+- **A2 – Off-track threshold.** 30% in AR, 50% in ARC. May be a typo. For safety, design so the car never leaves the track at all (assume 30%).
+- **A3 – Prize section.** The title mentions "Humanoid Penalty Kick" (copied from another category), and the amount is written as `Rp4.00.000,00` (possibly Rp4,000,000, etc.).
+- **A4 – "KSTI 2025"** appears in participant requirement 7; likely left over from an older edition.
+- **A5 – Sensor ban.** Infrared and line followers are clearly banned. The next sentence is confusing. The guidebook does not explicitly state whether cameras are allowed, even though Chapter I mentions computer vision. The status of LiDAR, ultrasonic, IMU, and encoders is also not stated. Confirm with the organizer before relying on any sensor other than a camera.
+- **A6 – Penalties vs violation limit.** Penalties are added seconds, but more than 3 violations end the attempt. It is unclear whether a 4th violation is penalized, and how the score is calculated for an attempt that ends early.
+- **A7 – Detached parts.** Counted as a violation with penalty (k = 0.2) and also ends the attempt immediately. Both are written.
+- **A8 – Score if not finished / not taking ARC.** `T_total` for an unfinished attempt is not defined. Hypothesis: `T_total >= T_stage`, so the speed bonus is 0. If ARC is not taken, `S_ARC` is treated as 0.
+- **A9 – Missing data.** Minimum elimination score, number of checkpoints `N_cp`/`Tcp`, track map (link only), test day schedule, batch 1/2 dates.
+- **A11 – Start/finish color.** Written as red, then "not necessarily red". Do not hardcode the start/finish or checkpoint colors without confirmation; design color parameters to be configurable.
