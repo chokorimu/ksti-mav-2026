@@ -39,11 +39,12 @@ and `app.py` stay untouched; `deploy` stays serverless (gated by config, sim pro
 
 Split into 6 subtasks (AGENTS.md rule 7). One at a time, commit after each.
 
-- [ ] 1. State + bridge + control channel (`src/mav/sim/dashboard/state.py`, `bridge.py`;
+- [x] 1. State + bridge + control channel (`src/mav/sim/dashboard/state.py`, `bridge.py`;
       runner gains `bridge=` + control handling + `realtime` pacing; `detect_with_debug()`
       in lane.py, additive). Done when: `pytest tests/test_dashboard.py` passes AND
       `run_sim(bridge=...)` returns a SimResult identical to `run_sim()` (same seed) AND
       scripted start/emergency/scenario/reset actions drive the state machine correctly.
+      DONE 7 Nov 2026, commit `e7044bb`: 20 new tests, full suite 77 passed (laptop).
 - [ ] 2. HTTP server (`src/mav/sim/dashboard/server.py`, stdlib only): `/`, `/state.json`,
       `/frame.jpg`, `/lane.json`, `/scenarios`, `POST /control`. Done when: curl against a
       running sim returns valid JSON/JPEG and a POST start makes the robot move.
