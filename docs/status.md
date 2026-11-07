@@ -53,11 +53,11 @@ Classical lane detector (`src/mav/perception/lane.py`, numpy-only) and a conserv
 - Proposed command (needs approval before it goes into `AGENTS.md`): `PYTHONPATH=src python -m mav.perception.lane <video> [--overlay out.mp4]` from the repo root.
 
 ## Open questions for the user
-- How are the motors and servo driven (driver on Jetson pins, PCA9685 over I2C, or a microcontroller over USB serial)? Emergency stop: what does it cut?
+- Arduino details: model, motor driver model, pins, servo model + angle range, battery/BEC for the 5 V rail. Emergency stop: what does it cut? (Recommendation: cut the motor power rail in hardware.)
 - Is the steering linkage true Ackermann geometry?
 - Organizer answers for A1 (differential), A5 (sensors), A11 (start/finish and checkpoint colors), plus checkpoint count and track map.
 - Simulator stack and how it exchanges frames and commands (recommendation recorded in `docs/open-questions.md` Q5).
-- Answered 7 Nov 2026: camera = CSI Raspberry Pi module; rear wheels = mechanical differential. See `docs/hardware.md`.
+- Answered 7 Nov 2026: camera = CSI Raspberry Pi module (alive on the Jetson); rear wheels = mechanical differential; motor/servo = Arduino over USB serial. See `docs/hardware.md`.
 
 ## Rules for any agent working here
 - Do not guess hardware facts or competition rules. Ask, and record the answer.

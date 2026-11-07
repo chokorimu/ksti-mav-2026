@@ -5,11 +5,16 @@ Ask all pending questions together at the end of a session, in one message.
 
 Last updated: 7 November 2026.
 
-## Q1 — Motor/servo driver and GPIO pins [OPEN]
-How are the motors and servo driven (driver on Jetson pins, PCA9685 over I2C, or a
-microcontroller over USB serial)? Which pins?
-Blocks: real motor/servo drivers, GPIO buttons, any actuator test with hardware.
-Related: emergency stop circuit — what does it cut?
+## Q1 — Motor/servo driver and GPIO pins [PARTLY ANSWERED 7 Nov 2026]
+Decided: Arduino over USB serial drives the motor driver and servo; the Jetson 40-pin
+header is not used for actuators.
+Still needed for the Arduino firmware and the power design:
+- Arduino model (Uno/Nano/ESP32?) and motor driver model (L298N/DRV8833/TB6612/4WD shield?).
+- Which Arduino pins, and the servo model + angle range.
+- Battery type/voltage, and the 5 V rail for motors/servo (BEC/UBEC, never the Arduino 5 V pin).
+- Emergency stop circuit: what does it cut? Recommendation: cut the motor power rail in
+  hardware (relay/MOSFET), independent of any software.
+Blocks: the Arduino firmware (the host-side SerialActuator can be written now).
 
 ## Q2 — Camera model and interface [ANSWERED 7 Nov 2026]
 CSI, Raspberry Pi camera module. Exact module (v1/v2/v3/GS) to verify on the device.

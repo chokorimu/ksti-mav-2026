@@ -12,6 +12,9 @@ Only facts confirmed by the user are in "Confirmed". Everything else is a questi
   (v1/v2/v3/GS) still to verify on the device; `nvarguscamerasrc` normally handles all of them.
 - Deploy drivetrain: the single rear motor drives both rear wheels through a mechanical
   differential (user, 7 Nov 2026).
+- Motor/servo control path: **Arduino over USB serial** (user decision, 7 Nov 2026).
+  Jetson stays the CV brain; the Arduino drives the motor driver and servo. The Jetson
+  40-pin header is NOT used for actuators (3.3 V logic, mA-level current, not real-time).
 - `scripts/setup_jetson.sh` runs on the Jetson (PyYAML 5.4.1 comes from the system packages).
 
 ## Verified on the Jetson (from the user's command output)
@@ -19,6 +22,7 @@ Only facts confirmed by the user are in "Confirmed". Everything else is a questi
 - OpenCV 4.8.0 with GStreamer 1.20.3. The build info had no CUDA line, so assume OpenCV runs on CPU only.
 - CUDA toolkit config 12.6, cuDNN 9.3, TensorRT 10.3.0.30 runtime libraries and ONNX parser (`libnvonnxparsers10`).
 - Power mode: `MAXN_SUPER` (mode id 2), the highest power mode.
+- CSI camera alive: `nvarguscamerasrc` works (user, 7 Nov 2026). Exact module still to identify.
 - Not seen in the package list (may be missing, verify): TensorRT development packages, `python3-libnvinfer`, `trtexec`, `nvcc`.
 
 ## To verify next
@@ -59,7 +63,6 @@ If `nvarguscamerasrc` fails, check the camera ribbon seating and `dmesg | grep -
 module (v1/v2/v3/GS) decides whether a driver/DTB update is needed on JetPack 6.2.3.
 
 ## Still unknown (needed before writing the real actuator/camera code)
-- What drives the motors and servo: driver wired to Jetson pins, PCA9685 over I2C, or a microcontroller (Arduino/ESP32) over USB serial.
 - Motor driver model(s), motor type, gearbox.
 - Battery type, voltage, capacity; regulator(s) feeding the Jetson and the motors.
 - Emergency stop circuit: what it cuts (motor power, or only a signal?).

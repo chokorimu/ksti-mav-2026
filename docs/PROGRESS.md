@@ -17,27 +17,31 @@ Time pressure: Technical Meeting 8 Nov 2026, Competition 12 Nov 2026.
 
 ## Current task
 
-Camera bring-up on the Jetson (unblocked since the camera is known: CSI, Raspberry Pi
-module). Run the commands in docs/hardware.md ("Camera bring-up") and save a test clip.
-Done when: `/tmp/csi_test.avi` (or similar) exists with a sane frame count.
+Recording real video on the Jetson (user task). Camera is alive (CSI, `nvarguscamerasrc`
+works). Record the variety listed in task 1 below; MJPG via `cv2.VideoWriter`, no hardware
+H.264. Done when: the clips exist on the Jetson.
 
 ## Next tasks (in order)
 
-1. Record real video on the Jetson (user task). Camera known (CSI RPi); bring-up
-   commands in docs/hardware.md. Done when: recordings of straight sections, curves,
-   both marking colors, dim/bright light, a checkpoint, start/finish exist.
+1. Record real video on the Jetson. Variety: straight, curves, white + black markings,
+   dim + bright light, dashed centre line, a checkpoint, start/finish. Done when: the
+   clips exist and play back.
 2. Run the detector offline on the recordings; recalibrate `px_per_m` and `bottom_row_m`
    (currently uncalibrated guesses: 130.0 / 0.3). Blocked by task 1.
    Done when: offsets/curvatures on recordings look sane and the constants are measured.
 3. Measure per-frame latency on the Jetson (`tegrastats` + the runner's latency printout).
    Blocked by task 1. Done when: mean/p95 ms per frame recorded in this file.
-4. Checkpoint / start-finish line detection. Not started. Split into subtasks before coding.
-5. Simulator bridge (frame/command exchange with the web simulator). Not started; blocked
-   on the simulator stack question (Q5, recommendation recorded in open-questions.md).
+4. `SerialActuator` (host side): send mapped wheel/steering commands to the Arduino over
+   USB serial, wrapped in the existing `SafeActuator` (stopped default, clamp, timeout).
+   Needs only the protocol decision + a serial port config (no hardcoded port names).
+   The Arduino firmware waits for the driver model (Q1). Done when: unit tests with a
+   fake serial port pass.
+5. Checkpoint / start-finish line detection. Not started. Split into subtasks before coding.
+6. Simulator bridge. Not started; blocked on Q5 (recommendation in open-questions.md).
 
 ## Blocked on hardware facts (details in docs/open-questions.md)
 
-- Real motor/servo drivers + GPIO buttons: driver type and pins unknown (Q1).
+- Arduino model, motor driver model, pins, servo model, battery/BEC, e-stop wiring (Q1).
 - Steering linkage Ackermann or not (Q4) — affects the bonus, not the v1 code.
 - Simulator stack (Q5).
 
