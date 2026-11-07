@@ -26,20 +26,13 @@ The single rear motor drives both rear wheels through a mechanical differential.
 ## Q4 — Steering linkage [OPEN]
 Is the steering linkage true Ackermann geometry? (Affects the Ackermann bonus, rule A1.)
 
-## Q5 — Simulator [OPEN, recommendation below]
-What stack is the web simulator, and how does it exchange frames and commands?
-Blocks: the simulator bridge (PROGRESS task 5).
-Recommendation (7 Nov 2026): given the time pressure, do NOT adopt a heavyweight
-simulator (Gazebo/Unity/Webots). Two efficient options, in order:
-  a) If the web simulator's code can be touched: expose the camera view as an MJPEG
-     stream and accept commands with one HTTP POST (or a single WebSocket carrying
-     both). Robot side then needs only two thin adapters: `cv2.VideoCapture` on the
-     MJPEG URL (reuses `open_video`'s path) and a small POST actuator. Perception,
-     control and the state machine stay untouched.
-  b) If it cannot be modified quickly: screen-record the simulator and run offline
-     with `open_video` (already works). No closed loop, but zero integration work.
-Either way the sim is secondary: the real camera is now known (CSI), so real
-recordings + the synthetic generator cover algorithm testing.
+## Q5 — Simulator [CLOSED 7 Nov 2026]
+No external web simulator is used. Replaced by the in-repo **web dashboard for the
+synthetic sim** (`src/mav/sim/dashboard/`), which serves the synthetic closed-loop
+simulator's state, camera frame and controls over plain HTTP (stdlib only).
+The recommendation above (a) is what got built: HTTP polling, no new dependency,
+and the robot side needed no adapter at all because the sim already runs the real
+`mav.app.step` loop. Blocks nothing any more.
 
 ## Q6 — Organizer answers (rules) [OPEN]
 A1 (differential), A5 (extra sensors), A11 (start/finish and checkpoint colors),

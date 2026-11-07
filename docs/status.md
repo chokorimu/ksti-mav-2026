@@ -11,7 +11,7 @@ Technical Meeting: 8 Nov 2026. Competition: 12 Nov 2026. Priority is a robot tha
 - Jetson Orin Nano, SSH only, no display. JetPack 6.2.3.
 - Three profiles: `sim`, `prototype`, `deploy`. The model can be switched between prototype and deploy.
 - Prototype robot: camera + 4 motors, one per wheel. Deploy robot (planned): 1 steering servo + 1 rear motor.
-- A web simulator exists and uses real computer vision.
+- A web simulator exists and uses real computer vision. **Superseded 7 Nov 2026:** replaced by the in-repo web dashboard for the synthetic sim (below). No external web simulator is needed; Q5 closed.
 - Documentation and agent files are in English. The user writes in Indonesian; reply in the user's language.
 
 ## Assumptions made by the previous agent (NOT confirmed, verify before relying on them)
@@ -25,7 +25,7 @@ Technical Meeting: 8 Nov 2026. Competition: 12 Nov 2026. Priority is a robot tha
 - On the Jetson: Python 3.10.12, OpenCV 4.8.0 (GStreamer yes, no CUDA line), CUDA 12.6, cuDNN 9.3, TensorRT 10.3 runtime. Power mode `MAXN_SUPER`.
 - `scripts/setup_jetson.sh` ran successfully.
 - The full `nvidia-jetpack` package is NOT installed (connection problems). TensorRT dev tools and Python bindings are unconfirmed. Not needed for classical CV.
-- 57 unit tests passed on the development laptop (Python 3.14.8, numpy 2.5.4, OpenCV 5.0.0). **They have not been run on the Jetson (Python 3.10).** Run `pytest` there first and report failures.
+- 99 unit tests passed on the development laptop (Python 3.14.8, numpy 2.5.4, OpenCV 5.0.0). **They have not been run on the Jetson (Python 3.10).** Run `pytest` there first and report failures.
 
 ## Code that exists (see `AGENTS.md` for the module list)
 Command type, camera/actuator/button interfaces, SafeActuator, differential and Ackermann mappers, state machine, `step()`.
@@ -41,11 +41,37 @@ Closed-loop synthetic simulator (`src/mav/sim/`): world + renderer + scenarios +
 - Results (laptop): straight and offset finish the 12 m with 100% detection and mean |offset| 0.004/0.023 m; curve and s_curve keep 100% detection inside the 0.6 m corridor with mean |offset| 0.14/0.18 m (pure-pursuit lag, no feedforward yet). 9 tests in `tests/test_sim.py`.
 - Bug the closed loop exposed (fixed): a path wrapping >180° re-entered the camera's forward window and corrupted the interpolation. `centre_x_fn` now follows the branch the vehicle is driving on, selected by arc length.
 
+## Web dashboard for the synthetic sim (subtasks 1-2 done on the laptop, 7 Nov 2026)
+Pure viewer + control channel. `lane.py`, `lane_policy.py` and `app.py` are untouched; the CV and control code stays identical to the real robot. Only the `sim` profile can start it — `deploy` has no `dashboard:` section and stays serverless.
+- `src/mav/sim/dashboard/state.py`: `SimState` -> JSON-safe dict (the browser contract in one place; numpy scalars and NaN/inf handled by `_plain`).
+- `src/mav/sim/dashboard/bridge.py`: `Control` / `parse_control` (start, emergency, scenario, reset), `Bridge` protocol, `NullBridge` (default), `FakeBridge` (tests).
+- `src/mav/sim/dashboard/server.py`: stdlib `http.server` only, no new dependency. `GET /` `/state.json` `/lane.json` `/frame.jpg(?w=)` `/scenarios`, `POST /control`. Geometry (lane polyline + trail) is split into `/lane.json` so the fast `/state.json` poll stays small. `../` traversal in `/static/` is rejected.
+- `src/mav/sim/runner.py`: `bridge=` publishes a `SimState` + frame per tick and drains controls; `realtime=True` paces the loop to `dt` per tick; `max_steps<=0` runs until the scenario ends. Scenario switch and RESET clear pending button events, so the robot waits for START — the real competition flow.
+- Controls mirror the physical buttons: START, EMERGENCY, then START again to RESUME (the checkpoint count survives STOPPED -> RUN). Only `new_attempt()` resets it.
+- `configs/sim.yaml` has a `dashboard:` section (`enabled: false` by default); `--dashboard` on the CLI also turns it on.
+- Bug found and fixed while wiring this up: `_sim_config()` resolved `parents[2]` == `src/`, so `configs/sim.yaml` was **never** read and every documented default silently fell back to argparse values. Same bug in `__main__.py` for non-sim profiles. Guarded by `test_sim_config_is_read_from_the_repo`.
+- Verified by hand (laptop): `curl` against a live run returned 200 JSON/JPEG; POST emergency froze the robot; POST start resumed it; POST scenario switched to `s_curve` and waited for START.
+- Tests: `tests/test_dashboard.py` (20) + `tests/test_dashboard_server.py` (22). Full suite 99 passed (laptop).
+- **Not done:** the browser frontend itself (3D arena, camera overlay, controls UI) — subtasks 3-5. `static/` currently holds vendored `three.module.js` r160 and a placeholder `index.html`.
+
 ## Not done (do not invent these; ask for the facts first)
 - Real motor/servo drivers and GPIO buttons: how the motors and servo are driven is unknown.
 - Checkpoint and start/finish detection (lane detection v1 exists but is uncalibrated).
 - Measured vehicle values in `configs/vehicle.yaml` (all `null`).
 - Emergency stop circuit details (what it cuts is unknown).
+
+## Web dashboard for the synthetic sim (subtasks 1-2 done on the laptop, 7 Nov 2026)
+Pure viewer + control channel. `lane.py`, `lane_policy.py` and `app.py` are untouched; the CV and control code stays identical to the real robot. Only the `sim` profile can start it — `deploy` has no `dashboard:` section and stays serverless.
+- `src/mav/sim/dashboard/state.py`: `SimState` -> JSON-safe dict (the browser contract in one place; numpy scalars and NaN/inf handled by `_plain`).
+- `src/mav/sim/dashboard/bridge.py`: `Control` / `parse_control` (start, emergency, scenario, reset), `Bridge` protocol, `NullBridge` (default), `FakeBridge` (tests).
+- `src/mav/sim/dashboard/server.py`: stdlib `http.server` only, no new dependency. `GET /` `/state.json` `/lane.json` `/frame.jpg(?w=)` `/scenarios`, `POST /control`. Geometry (lane polyline + trail) is split into `/lane.json` so the fast `/state.json` poll stays small. `../` traversal in `/static/` is rejected.
+- `src/mav/sim/runner.py`: `bridge=` publishes a `SimState` + frame per tick and drains controls; `realtime=True` paces the loop to `dt` per tick; `max_steps<=0` runs until the scenario ends. Scenario switch and RESET clear pending button events, so the robot waits for START — the real competition flow.
+- Controls mirror the physical buttons: START, EMERGENCY, then START again to RESUME (the checkpoint count survives STOPPED -> RUN). Only `new_attempt()` resets it.
+- `configs/sim.yaml` has a `dashboard:` section (`enabled: false` by default); `--dashboard` on the CLI also turns it on.
+- Bug found and fixed while wiring this up: `_sim_config()` resolved `parents[2]` == `src/`, so `configs/sim.yaml` was **never** read and every documented default silently fell back to argparse values. Same bug in `__main__.py` for non-sim profiles. Guarded by `test_sim_config_is_read_from_the_repo`.
+- Verified by hand (laptop): `curl` against a live run returned 200 JSON/JPEG; POST emergency froze the robot; POST start resumed it; POST scenario switched to `s_curve` and waited for START.
+- Tests: `tests/test_dashboard.py` (20) + `tests/test_dashboard_server.py` (22). Full suite 99 passed (laptop).
+- **Not done:** the browser frontend itself (3D arena, camera overlay, controls UI) — subtasks 3-5. `static/` currently holds vendored `three.module.js` r160 and a placeholder `index.html`.
 
 ## Lane detection v1 (done on synthetic frames only, 7 Nov 2026)
 - `LaneDetector` (numpy, no cv2): grayscale -> ROI -> large-window box background -> residual threshold at ±3.5·robust sigma (3x3 high-pass MAD) -> per-band marking centroids -> weighted quadratic fit -> offset at the lookahead row, curvature, confidence. Auto polarity picks light or dark markings.
@@ -53,6 +79,11 @@ Closed-loop synthetic simulator (`src/mav/sim/`): world + renderer + scenarios +
 - Tests (`tests/test_lane.py`, `tests/test_lane_policy.py`, generator `tests/synthetic_lane.py`): affine projection asserts near-exact numbers; a "taper" projection (scale shrinks with distance) checks the sign and rough magnitude under scale variation. 18 tests, all passing on the laptop.
 - Offline runner smoke-tested on a synthetic video: 120/120 frames detected, mean 8.3 ms/frame on the laptop (Jetson latency NOT measured).
 - **Uncalibrated:** `px_per_m=130` and `bottom_row_m=0.3` are guesses. Offset/curvature are only exact at the lookahead row. Known weakness: a low camera makes near markings thick relative to the 75 px background window. Validate on real recordings before trusting the numbers.
+
+## Current task: finish the web dashboard (subtasks 3-5), then real recordings
+1. Browser frontend for the dashboard (subtasks 3-5 of `docs/PROGRESS.md`): 3D arena + car,
+   camera panel with the detector overlay, debug numbers, controls wired to `POST /control`.
+   Backend is done and tested; only `static/` is left. Visual verification stays with the user.
 
 ## Next task: lane detection from real recordings
 1. Record real video from the robot camera on the Jetson, headless. Do not rely on hardware H.264 encoding; saving frames or MJPG via `cv2.VideoWriter` is safer. Camera is CSI (Raspberry Pi module); bring-up commands are in `docs/hardware.md`. **(user task)**
@@ -67,7 +98,7 @@ Closed-loop synthetic simulator (`src/mav/sim/`): world + renderer + scenarios +
 - Arduino details: model, motor driver model, pins, servo model + angle range, battery/BEC for the 5 V rail. Emergency stop: what does it cut? (Recommendation: cut the motor power rail in hardware.)
 - Is the steering linkage true Ackermann geometry?
 - Organizer answers for A1 (differential), A5 (sensors), A11 (start/finish and checkpoint colors), plus checkpoint count and track map.
-- Simulator stack and how it exchanges frames and commands (recommendation recorded in `docs/open-questions.md` Q5).
+- ~~Simulator stack and how it exchanges frames and commands~~ **closed 7 Nov 2026**: replaced by the in-repo web dashboard for the synthetic sim. No external web simulator is needed.
 - Answered 7 Nov 2026: camera = CSI Raspberry Pi module (alive on the Jetson); rear wheels = mechanical differential; motor/servo = Arduino over USB serial. See `docs/hardware.md`.
 
 ## Rules for any agent working here

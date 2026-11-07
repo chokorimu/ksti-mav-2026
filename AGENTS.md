@@ -84,7 +84,17 @@ tests/
     the real `mav.app.step` with the real detector and policy; only the camera and actuator
     layers are simulated). CLI: `PYTHONPATH=src python -m mav.sim.runner [scenario]
     [--steps N] [--dt S] [--seed S] [--overlay out.mp4] [--list]`. Tests: `tests/test_sim.py`.
-- **Not written yet:** real motor/servo drivers, GPIO buttons, checkpoint detection, and the web-simulator bridge (the synthetic sim above is done). Do not invent them; ask for the hardware facts in `docs/hardware.md` first.
+- `src/mav/sim/dashboard/` (web dashboard for the sim, pure viewer + control channel):
+    `state.py` (`SimState` -> JSON-safe dict, the browser contract), `bridge.py`
+    (`Control`/`parse_control`, `Bridge`, `NullBridge`, `FakeBridge`), `server.py`
+    (stdlib `http.server`: `/`, `/state.json`, `/lane.json`, `/frame.jpg`, `/scenarios`,
+    `POST /control`), `static/` (vendored three.js + frontend). `lane.py`, `lane_policy.py`
+    and `app.py` are untouched by it. Only the `sim` profile starts a server (`--dashboard`
+    or `dashboard.enabled` in `configs/sim.yaml`); `deploy` has no such section and stays
+    serverless. Tests: `tests/test_dashboard.py`, `tests/test_dashboard_server.py`.
+- **Not written yet:** real motor/servo drivers, GPIO buttons, checkpoint detection, and the
+    dashboard browser frontend (3D arena, camera overlay, controls UI — backend is done).
+    Do not invent them; ask for the hardware facts in `docs/hardware.md` first.
 
 ## Long-running work protocol (anti-drift)
 
@@ -119,8 +129,11 @@ Run all commands from the repo root. Use bash.
 - Jetson setup (Orin Nano, aarch64): `scripts/setup_jetson.sh` (uses `--system-site-packages` so JetPack's OpenCV/TensorRT stay visible; do not pip-install x86 wheels there)
 - Run a profile: `scripts/run.sh <sim|prototype|deploy>`. Currently this only loads and prints the profile config; the actual pipeline is not wired yet.
 - Run sim: `scripts/run.sh sim [scenario]` (synthetic closed-loop sim; defaults from
-  `configs/sim.yaml` section `sim:`). The web simulator's own launch command is _TBD_
-  (its stack and frame/command interface are not yet known).
+  `configs/sim.yaml` section `sim:`).
+- Run sim + web dashboard: `scripts/run.sh sim [scenario] --dashboard`, then open
+  http://127.0.0.1:8000 (host/port from the `dashboard:` section of `configs/sim.yaml`;
+  `enabled: true` there starts it without the flag). The dashboard is a viewer plus a
+  control channel only — it never computes anything, and `deploy` never starts a server.
 - Run on Jetson: `scripts/run.sh prototype` (debug on) or `scripts/run.sh deploy` (no debug, no network). Use the same `sudo nvpmodel` mode as the competition.
 - Tests: `source .venv/bin/activate && pytest` (on the Jetson install pytest first: `pip install pytest`, or `sudo apt install python3-pytest`)
 - Check JetPack (on the Jetson, before any version-dependent install): `cat /etc/nv_tegra_release` and `apt show nvidia-jetpack`

@@ -45,9 +45,15 @@ Split into 6 subtasks (AGENTS.md rule 7). One at a time, commit after each.
       `run_sim(bridge=...)` returns a SimResult identical to `run_sim()` (same seed) AND
       scripted start/emergency/scenario/reset actions drive the state machine correctly.
       DONE 7 Nov 2026, commit `e7044bb`: 20 new tests, full suite 77 passed (laptop).
-- [ ] 2. HTTP server (`src/mav/sim/dashboard/server.py`, stdlib only): `/`, `/state.json`,
+- [x] 2. HTTP server (`src/mav/sim/dashboard/server.py`, stdlib only): `/`, `/state.json`,
       `/frame.jpg`, `/lane.json`, `/scenarios`, `POST /control`. Done when: curl against a
       running sim returns valid JSON/JPEG and a POST start makes the robot move.
+      DONE 7 Nov 2026, commit `19298c8`: 22 new tests, full suite 99 passed (laptop).
+      Also fixed a real bug found on the way: `_sim_config()` resolved `parents[2]` == `src/`,
+      so `configs/sim.yaml` was NEVER read and every documented default silently fell back to
+      argparse values. Same bug in `__main__.py` (non-sim profiles). Guarded by
+      `test_sim_config_is_read_from_the_repo`. `configs/sim.yaml` now has the `dashboard:`
+      section (subtask 6's config part, done here).
 - [ ] 3. Arena 3D + car (`static/`): vendored `three.module.js`, floor, lane, car with
       steering front wheels, lookahead marker, trail. Done when: the user verifies visually
       on the laptop that the render matches the world.
@@ -59,6 +65,7 @@ Split into 6 subtasks (AGENTS.md rule 7). One at a time, commit after each.
       (select scenario -> start -> emergency -> start again (resume) -> reset).
 - [ ] 6. Config gating + docs + commit: `dashboard:` section in `configs/sim.yaml`;
       `deploy.yaml` has none -> no server. Update AGENTS.md, status.md, close Q5.
+      Config part DONE in subtask 2 (`19298c8`). Remaining: docs only.
 
 Frontend subtasks 3-5 are one block (same `app.js`/`index.html`) and may be delegated to a
 subagent against the JSON contract fixed in subtask 1; visual verification stays with the user.
