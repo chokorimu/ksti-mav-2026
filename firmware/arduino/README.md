@@ -5,11 +5,12 @@ drives the motor driver and the steering servo, commanded by the Jetson over
 USB serial. The wire contract is `protocol.md` in this directory — read it
 first, it is the single source of truth for both sides.
 
-**Status: no firmware code yet.** Blocked on Q1 in `docs/open-questions.md`
-(Arduino model, motor driver model, pins, servo model + angle range,
-battery/BEC, e-stop wiring). Do not guess these; ask the user and record the
-answers in `docs/hardware.md` first. What is done now: the architecture, the
-serial protocol, and the host side (`SerialActuator` in `src/mav/io/actuator.py`).
+**Status (7 Nov 2026):** the shared core is written and unit-tested on the
+laptop; the two sketches are **scaffolds** with the Q1 hardware constants
+deliberately empty. Blocked on Q1 in `docs/open-questions.md` (Arduino model,
+motor driver model, pins, servo model + angle range, battery/BEC, e-stop
+wiring). Do not guess these; ask the user and record the answers in
+`docs/hardware.md` first.
 
 ## Architecture (decided 7 Nov 2026)
 
@@ -26,8 +27,8 @@ serial protocol, and the host side (`SerialActuator` in `src/mav/io/actuator.py`
 ## Two variants, one core
 
 The two robots differ in hardware, so there are two sketches — but NOT two
-copies. Identical in both: protocol parsing, watchdog, safety, output stage.
-Different: pin map and channel semantics.
+copies. Identical in both: protocol parsing, watchdog, safety. Different:
+pin map and output stage (PWM channels vs servo + motor).
 
 | Variant | Hardware | Speaks | Sketch |
 |---|---|---|---|
@@ -43,17 +44,18 @@ Naming follows the repo profiles (`configs/`, `models/`, `scripts/run.sh`):
 firmware/arduino/
   README.md          this file
   protocol.md        the serial contract, mirrored by src/mav/io/actuator.py
-  platformio.ini     [env:prototype] + [env:final]; written once Q1 names the board
-  core/              shared Arduino library: protocol parser, watchdog, safety,
-                     output stage (board-agnostic; compiled into both sketches)
+  MavCore/           shared Arduino library: protocol.md parser + watchdog.
+                     Board-agnostic C++ (no Arduino headers), so it is
+                     unit-tested on the laptop with g++ - see below.
   prototype/
-    prototype.ino    4-motor skid steer, speaks "W"
+    prototype.ino    4-motor skid steer, speaks "W". SCAFFOLD: Q1 constants empty.
   final/
-    final.ino        steering servo + rear motor, speaks "D"
+    final.ino        steering servo + rear motor, speaks "D". SCAFFOLD: Q1 constants empty.
+  platformio.ini     [env:prototype] + [env:final]; written once Q1 names the board
 ```
 
-Build system: **PlatformIO** (`pip install platformio`), because it makes the
-variant a build flag instead of a code copy — the same "select via
+Build system (planned): **PlatformIO** (`pip install platformio`), because it
+makes the variant a build flag instead of a code copy — the same "select via
 configuration, not by editing code" rule the Python profiles follow:
 
 ```
@@ -61,10 +63,17 @@ pio run -e prototype -t upload
 pio run -e final -t upload
 ```
 
-`platformio.ini` and everything under `core/` wait for Q1: the board model
-decides the platform/fqbn, and the output stage differs per MCU family
-(AVR `analogWrite` vs ESP32 LEDC). The protocol parser and watchdog are
-board-agnostic and will be the first thing written there.
+`platformio.ini` waits for Q1: the board model decides the platform/fqbn.
+
+### Scaffold rules (why the .ino constants are empty)
+
+- Every unknown is an explicit `TODO(Q1)` with value `0` / `-1`. Nothing is
+  guessed: pin numbers, PWM ranges and servo ranges are hardware facts.
+- Flashed as-is, a scaffold cannot move anything (zero PWM, neutral/zero
+  servo, no-op output stage). That is the correct fail-safe: firmware that
+  knows nothing about the hardware must not be able to drive it.
+- The sketches do not compile until the Q1 block is filled and the toolchain
+  is installed. The shared core below compiles and passes tests TODAY.
 
 ## Safety rules the firmware must follow
 
@@ -81,8 +90,18 @@ board-agnostic and will be the first thing written there.
 
 ## Testing order (AGENTS.md rule 5)
 
-1. Host side: `tests/test_serial_actuator.py` with a fake serial port — done.
-2. Firmware: bench test wheels-lifted — every motor spins the right way,
-   stop on watchdog (pull the USB cable mid-command), stop on garbage input,
+1. Shared core, on the laptop (done 7 Nov 2026):
+
+   ```
+   cd firmware/arduino/MavCore
+   g++ -std=c++11 -Wall -Wextra -I src test/test_protocol.cpp src/MavCore.cpp \
+       -o /tmp/mav_proto_test && /tmp/mav_proto_test
+   ```
+
+   Covers: verb dispatch, CRLF tolerance, malformed-line counting, watchdog
+   expiry and re-arming, boot state, buffer overflow rejection.
+2. Host side: `tests/test_serial_actuator.py` with a fake serial port — done.
+3. Firmware bench test, wheels-lifted: every motor spins the right way, stop
+   on watchdog (pull the USB cable mid-command), stop on garbage input,
    e-stop cuts power.
-3. Then the track.
+4. Then the track.
