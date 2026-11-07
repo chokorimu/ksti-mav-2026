@@ -22,7 +22,7 @@ If a task touches an item marked **[A#]** in the rules, do not guess. Ask the us
 | Config | Drive | Steering | Notes |
 |---|---|---|---|
 | `prototype` | 4 motors, one per wheel | differential (skid) steering by wheel speeds | development only: rule 5.1 requires a steering axle |
-| `deploy` | 1 motor on the rear wheel | 1 servo on the steering axle | competition hardware; Ackermann bonus depends on the steering linkage **[A1]** |
+| `final` | 1 motor on the rear wheel | 1 servo on the steering axle | competition hardware; Ackermann bonus depends on the steering linkage **[A1]** |
 
 - Perception and control must output a **vehicle-agnostic command**: `(speed, curvature)` or `(speed, yaw_rate)`. Never output motor or servo values directly.
 - Each actuator implementation maps that command to its hardware: differential config -> left/right wheel speeds; servo config -> steering angle (`atan(wheel_base * curvature)`) + motor speed.
@@ -35,9 +35,9 @@ Select via configuration, not by editing code.
 |---|---|---|---|
 | `sim` | laptop + web sim | prototype model | test algorithms without hardware |
 | `prototype` | Jetson/laptop | prototype model (debug, overlay, full logging) | iteration and measurement |
-| `deploy` | Jetson | optimized model (e.g. TensorRT), no debug | competition mode |
+| `final` | Jetson | optimized model (e.g. TensorRT), no debug | competition mode |
 
-`deploy` rules: no network server, streaming, or SSH dependency while the robot runs. It starts automatically at boot and waits for the physical start button.
+`final` rules: no network server, streaming, or SSH dependency while the robot runs. It starts automatically at boot and waits for the physical start button.
 
 ## Hard constraints from the competition (no design may violate these)
 - Infrared sensors and line followers are banned. Do not add sensors other than the camera without organizer confirmation **[A5]**.
@@ -59,9 +59,9 @@ Select via configuration, not by editing code.
 ```
 AGENTS.md
 docs/        ksti-mav-rules.md, research-plan.md, hardware.md
-configs/     sim.yaml, prototype.yaml, deploy.yaml
+configs/     sim.yaml, prototype.yaml, final.yaml
 src/         perception/, planning/, control/, io/ (camera, actuator: sim & real), sim/
-models/      prototype/, deploy/
+models/      prototype/, final/
 scripts/     setup_dev.sh, setup_jetson.sh, run.sh
 tests/
 ```
@@ -71,9 +71,9 @@ tests/
 - `src/mav/io/camera.py`: `Camera` protocol, `csi_pipeline()` (GStreamer, headless), `open_csi/open_usb/open_video`, `CallbackCamera` for the simulator.
 - `src/mav/io/actuator.py`: `SafeActuator` (stopped by default, speed clamp, command timeout), `NullActuator`, `CallbackActuator` for the simulator.
 - `src/mav/io/buttons.py`: `Event` and `ScriptedButtons`. **Real GPIO buttons are not written**: pins and wiring are unknown.
-- `src/mav/control/mapping.py`: `DifferentialMapper` (prototype) and `AckermannMapper` (deploy).
+- `src/mav/control/mapping.py`: `DifferentialMapper` (prototype) and `AckermannMapper` (final).
 - `src/mav/control/state_machine.py`: BOOT/WAIT_START/RUN/STOPPED; resume after emergency keeps the checkpoint count.
-- `src/mav/app.py`: `step()`, one loop iteration shared by sim, prototype and deploy.
+- `src/mav/app.py`: `step()`, one loop iteration shared by sim, prototype and final.
 - `src/mav/perception/lane.py`: LaneDetector (numpy-only), offline runner
     `PYTHONPATH=src python -m mav.perception.lane <video> [--overlay out.mp4]`.
 - `src/mav/planning/lane_policy.py`: LanePolicy (measurement -> Command, pure-pursuit). Both have tests on synthetic frames.
@@ -90,7 +90,7 @@ tests/
     (stdlib `http.server`: `/`, `/state.json`, `/lane.json`, `/frame.jpg`, `/scenarios`,
     `POST /control`), `static/` (vendored three.js + frontend). `lane.py`, `lane_policy.py`
     and `app.py` are untouched by it. Only the `sim` profile starts a server (`--dashboard`
-    or `dashboard.enabled` in `configs/sim.yaml`); `deploy` has no such section and stays
+    or `dashboard.enabled` in `configs/sim.yaml`); `final` has no such section and stays
     serverless. Tests: `tests/test_dashboard.py`, `tests/test_dashboard_server.py`.
 - **Not written yet:** real motor/servo drivers, GPIO buttons, checkpoint detection, and the
     dashboard browser frontend (3D arena, camera overlay, controls UI — backend is done).
@@ -127,13 +127,13 @@ Run all commands from the repo root. Use bash.
 
 - Dev setup (laptop, x86_64): `scripts/setup_dev.sh`
 - Jetson setup (Orin Nano, aarch64): `scripts/setup_jetson.sh` (uses `--system-site-packages` so JetPack's OpenCV/TensorRT stay visible; do not pip-install x86 wheels there)
-- Run a profile: `scripts/run.sh <sim|prototype|deploy>`. Currently this only loads and prints the profile config; the actual pipeline is not wired yet.
+- Run a profile: `scripts/run.sh <sim|prototype|final>`. Currently this only loads and prints the profile config; the actual pipeline is not wired yet.
 - Run sim: `scripts/run.sh sim [scenario]` (synthetic closed-loop sim; defaults from
   `configs/sim.yaml` section `sim:`).
 - Run sim + web dashboard: `scripts/run.sh sim [scenario] --dashboard`, then open
   http://127.0.0.1:8000 (host/port from the `dashboard:` section of `configs/sim.yaml`;
   `enabled: true` there starts it without the flag). The dashboard is a viewer plus a
-  control channel only — it never computes anything, and `deploy` never starts a server.
-- Run on Jetson: `scripts/run.sh prototype` (debug on) or `scripts/run.sh deploy` (no debug, no network). Use the same `sudo nvpmodel` mode as the competition.
+  control channel only — it never computes anything, and `final` never starts a server.
+- Run on Jetson: `scripts/run.sh prototype` (debug on) or `scripts/run.sh final` (no debug, no network). Use the same `sudo nvpmodel` mode as the competition.
 - Tests: `source .venv/bin/activate && pytest` (on the Jetson install pytest first: `pip install pytest`, or `sudo apt install python3-pytest`)
 - Check JetPack (on the Jetson, before any version-dependent install): `cat /etc/nv_tegra_release` and `apt show nvidia-jetpack`

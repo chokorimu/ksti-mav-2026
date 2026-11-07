@@ -7,10 +7,10 @@ Only facts confirmed by the user are in "Confirmed". Everything else is a questi
 - JetPack 6.2.3 (L4T R36.5, from `/etc/nv_tegra_release` and `apt show nvidia-jetpack`).
 - Current power mode: `MAXN_SUPER`.
 - Prototype robot: camera + 4 motors, one per wheel.
-- Deploy robot (planned): 1 servo for steering + 1 motor for the rear wheel.
+- Final robot (planned): 1 servo for steering + 1 motor for the rear wheel.
 - Camera: CSI interface, Raspberry Pi camera module (user, 7 Nov 2026). Exact module
   (v1/v2/v3/GS) still to verify on the device; `nvarguscamerasrc` normally handles all of them.
-- Deploy drivetrain: the single rear motor drives both rear wheels through a mechanical
+- Final drivetrain: the single rear motor drives both rear wheels through a mechanical
   differential (user, 7 Nov 2026).
 - Motor/servo control path: **Arduino over USB serial** (user decision, 7 Nov 2026).
   Jetson stays the CV brain; the Arduino drives the motor driver and servo. The Jetson

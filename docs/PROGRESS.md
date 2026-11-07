@@ -35,7 +35,7 @@ detector overlay, and debug numbers — plus start / emergency / scenario / rese
 Decisions taken: HTTP polling with stdlib `ThreadingHTTPServer` (no new dependency),
 three.js vendored in-repo, this REPLACES the external web simulator (Q5 closed).
 Hard rule: the dashboard is a pure viewer + control channel. `lane.py`, `lane_policy.py`
-and `app.py` stay untouched; `deploy` stays serverless (gated by config, sim profile only).
+and `app.py` stay untouched; `final` stays serverless (gated by config, sim profile only).
 
 Split into 6 subtasks (AGENTS.md rule 7). One at a time, commit after each.
 
@@ -70,7 +70,7 @@ Split into 6 subtasks (AGENTS.md rule 7). One at a time, commit after each.
       `scripts/run.sh sim curve --dashboard` runs and check that the arena matches the world,
       the overlay matches the numbers, and the full control loop works.
 - [x] 6. Config gating + docs + commit: `dashboard:` section in `configs/sim.yaml`;
-      `deploy.yaml` has none -> no server. Update AGENTS.md, status.md, close Q5.
+      `final.yaml` has none -> no server. Update AGENTS.md, status.md, close Q5.
       DONE 7 Nov 2026: config part in `19298c8`, docs in `e027c07`.
 
 Frontend subtasks 3-5 are one block (same `app.js`/`index.html`) and may be delegated to a

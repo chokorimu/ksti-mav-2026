@@ -1,7 +1,7 @@
 """Map a vehicle-agnostic Command to hardware-level values.
 
 prototype (4 independently driven wheels) -> DifferentialMapper -> left/right wheel speeds
-deploy    (1 steering servo + 1 rear motor) -> AckermannMapper   -> steering angle + speed
+final    (1 steering servo + 1 rear motor) -> AckermannMapper   -> steering angle + speed
 Conventions: curvature > 0 is a left turn; steering angle > 0 is left.
 """
 from __future__ import annotations

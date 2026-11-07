@@ -25,7 +25,7 @@ STOP = Command(0.0, 0.0)
 
 @dataclass(frozen=True)
 class VehicleParams:
-    drive: str            # "differential" (prototype) or "ackermann" (deploy)
+    drive: str            # "differential" (prototype) or "ackermann" (final)
     wheel_base_m: float
     track_width_m: float
     max_steer_rad: float

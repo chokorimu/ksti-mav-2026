@@ -8,7 +8,7 @@ Status: initial draft. Items marked **(assumption)** must be confirmed by the us
 |---|---|
 | Robot computer | Jetson Orin Nano, SSH access only, no display. JetPack 6.2.3 (L4T R36.5) |
 | Dev environment | Linux (priority), Windows (fallback) |
-| Models | Must be able to switch between prototype and deploy versions |
+| Models | Must be able to switch between prototype and final versions |
 | Team | Programmers with limited electrical engineering knowledge |
 | Simulation | Web-based, but uses real computer vision. Stack and interface: **unknown** |
 
@@ -30,7 +30,7 @@ Green checkpoints (not necessarily marked), start/finish color uncertain, obstac
 
 ### RQ3 – Planning and control
 - Kinematic steering model (bicycle/Ackermann) for turning radius ≥ 1.5 m and track width 50 cm ± 10%.
-- Two vehicle configs exist (prototype: 4 independently driven wheels; deploy: 1 steering servo + 1 rear motor). Control outputs a vehicle-agnostic `(speed, curvature)`; each actuator maps it to hardware. This keeps tuning on the prototype transferable.
+- Two vehicle configs exist (prototype: 4 independently driven wheels; final: 1 steering servo + 1 rear motor). Control outputs a vehicle-agnostic `(speed, curvature)`; each actuator maps it to hardware. This keeps tuning on the prototype transferable.
 - Candidate controllers: pure pursuit or Stanley for steering, PID for speed. Speed adapted to curvature.
 - Trade-off from the scoring formula: `cp` matters more than the speed bonus, while leaving the track adds `0.8 * T_stage / N_cp` seconds. Choose a target speed that keeps the chance of leaving the track very low.
 - A **state machine** is required: `BOOT → WAIT_START → RUN → STOPPED (emergency) → WAIT_START → RUN ...`. After a manual restart at the last checkpoint, the checkpoint count must not reset and the robot must find the lane again quickly (assumption: placed at the checkpoint, possibly at an angle).
@@ -47,11 +47,11 @@ Green checkpoints (not necessarily marked), start/finish color uncertain, obstac
 - Linux: a single setup script. Windows: use WSL2; set `.gitattributes` to LF line endings; do not hardcode serial port names or paths.
 - Consider containers to standardize environments, noting that Jetson and laptop images differ.
 
-### RQ6 – Prototype → deploy model
+### RQ6 – Prototype → final model
 - Flow: train/test on laptop or sim → export (e.g. ONNX) → optimize for Jetson (e.g. TensorRT, lower precision if accuracy holds) → parity test.
 - TensorRT 10.3 runtime and ONNX parser are installed; `trtexec` and the Python bindings were not seen in the package list and must be verified (see `docs/hardware.md`).
-- Parity test: for the same set of frames, the output difference between prototype and deploy models must be below an agreed threshold; also measure FPS/latency.
-- Profile selection via `configs/*.yaml` and one variable (e.g. `MAV_PROFILE`), not code branches. The `deploy` profile disables all network and debug components.
+- Parity test: for the same set of frames, the output difference between prototype and final models must be below an agreed threshold; also measure FPS/latency.
+- Profile selection via `configs/*.yaml` and one variable (e.g. `MAV_PROFILE`), not code branches. The `final` profile disables all network and debug components.
 
 ### RQ7 – Web simulation and sim-to-real gap
 Suggested contract: the sim only replaces two interfaces.
@@ -96,7 +96,7 @@ Questions an electrical engineer must answer: which motor and driver are used, b
 
 **P2 – Reliability**
 - Parameterized checkpoint and start/finish detection; adaptive speed; tests under different lighting and floor colors.
-- Deploy: optimized model, autostart, fixed power mode, no network.
+- Final: optimized model, autostart, fixed power mode, no network.
 - Full dry run with the referee procedure (10 minutes preparation, start, violation, restart, emergency).
 
 **P3 – Optional**
@@ -110,7 +110,7 @@ Questions an electrical engineer must answer: which motor and driver are used, b
 | Floor/marking color changes at venue | Perception fails | Color parameters, calibration during preparation, domain randomization |
 | Rule ambiguities (A1, A5, A11) | Design violates rules | Ask the organizer before locking the design |
 | Sim does not represent the real world | Misleading results | Replay real recordings, wheels-lifted tests |
-| Deploy model behaves differently from prototype | Silent regression | Parity test |
+| Final model behaves differently from prototype | Silent regression | Parity test |
 | Time too short | Not enough testing | Follow P0 → P1 order first |
 | Car part detaches | Attempt ends | Locking and inspection before start |
 

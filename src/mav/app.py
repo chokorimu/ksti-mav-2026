@@ -1,4 +1,4 @@
-"""One control-loop iteration. Same code for sim, prototype and deploy."""
+"""One control-loop iteration. Same code for sim, prototype and final."""
 from __future__ import annotations
 
 from typing import Callable, Optional

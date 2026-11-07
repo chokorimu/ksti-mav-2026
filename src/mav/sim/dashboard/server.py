@@ -13,7 +13,7 @@ Endpoints:
 No third-party dependency: `http.server` from the standard library. The server
 only moves data between the browser and the running sim loop — it computes
 nothing, so the CV and control code stays identical to the real robot. Only the
-sim profile ever starts it (configs/sim.yaml `dashboard:`); deploy has no such
+sim profile ever starts it (configs/sim.yaml `dashboard:`); final has no such
 section and stays serverless.
 """
 from __future__ import annotations

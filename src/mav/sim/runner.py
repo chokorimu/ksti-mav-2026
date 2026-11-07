@@ -372,7 +372,7 @@ def main(argv: list[str] | None = None) -> int:
     name = args.scenario or cfg.get("scenario", "straight")
     dash_cfg = cfg.get("dashboard") or {}
     # Server only starts on request: --dashboard, or enabled: true in the config.
-    # deploy.yaml has no dashboard section, so it can never start there.
+    # final.yaml has no dashboard section, so it can never start there.
     dash = dash_cfg if (args.dashboard or dash_cfg.get("enabled")) else {}
     bridge = None
     server = None

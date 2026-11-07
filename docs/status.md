@@ -9,8 +9,8 @@ Technical Meeting: 8 Nov 2026. Competition: 12 Nov 2026. Priority is a robot tha
 ## Decisions made by the user
 - Repo `ksti-mav-2026`; Linux preferred for development (Windows as fallback).
 - Jetson Orin Nano, SSH only, no display. JetPack 6.2.3.
-- Three profiles: `sim`, `prototype`, `deploy`. The model can be switched between prototype and deploy.
-- Prototype robot: camera + 4 motors, one per wheel. Deploy robot (planned): 1 steering servo + 1 rear motor.
+- Three profiles: `sim`, `prototype`, `final`. The model can be switched between prototype and final.
+- Prototype robot: camera + 4 motors, one per wheel. Final robot (planned): 1 steering servo + 1 rear motor.
 - A web simulator exists and uses real computer vision. **Superseded 7 Nov 2026:** replaced by the in-repo web dashboard for the synthetic sim (below). No external web simulator is needed; Q5 closed.
 - Documentation and agent files are in English. The user writes in Indonesian; reply in the user's language.
 
@@ -42,7 +42,7 @@ Closed-loop synthetic simulator (`src/mav/sim/`): world + renderer + scenarios +
 - Bug the closed loop exposed (fixed): a path wrapping >180° re-entered the camera's forward window and corrupted the interpolation. `centre_x_fn` now follows the branch the vehicle is driving on, selected by arc length.
 
 ## Web dashboard for the synthetic sim (subtasks 1-2 done on the laptop, 7 Nov 2026)
-Pure viewer + control channel. `lane.py`, `lane_policy.py` and `app.py` are untouched; the CV and control code stays identical to the real robot. Only the `sim` profile can start it — `deploy` has no `dashboard:` section and stays serverless.
+Pure viewer + control channel. `lane.py`, `lane_policy.py` and `app.py` are untouched; the CV and control code stays identical to the real robot. Only the `sim` profile can start it — `final` has no `dashboard:` section and stays serverless.
 - `src/mav/sim/dashboard/state.py`: `SimState` -> JSON-safe dict (the browser contract in one place; numpy scalars and NaN/inf handled by `_plain`).
 - `src/mav/sim/dashboard/bridge.py`: `Control` / `parse_control` (start, emergency, scenario, reset), `Bridge` protocol, `NullBridge` (default), `FakeBridge` (tests).
 - `src/mav/sim/dashboard/server.py`: stdlib `http.server` only, no new dependency. `GET /` `/state.json` `/lane.json` `/frame.jpg(?w=)` `/scenarios`, `POST /control`. Geometry (lane polyline + trail) is split into `/lane.json` so the fast `/state.json` poll stays small. `../` traversal in `/static/` is rejected.
@@ -61,7 +61,7 @@ Pure viewer + control channel. `lane.py`, `lane_policy.py` and `app.py` are unto
 - Emergency stop circuit details (what it cuts is unknown).
 
 ## Web dashboard for the synthetic sim (subtasks 1-2 done on the laptop, 7 Nov 2026)
-Pure viewer + control channel. `lane.py`, `lane_policy.py` and `app.py` are untouched; the CV and control code stays identical to the real robot. Only the `sim` profile can start it — `deploy` has no `dashboard:` section and stays serverless.
+Pure viewer + control channel. `lane.py`, `lane_policy.py` and `app.py` are untouched; the CV and control code stays identical to the real robot. Only the `sim` profile can start it — `final` has no `dashboard:` section and stays serverless.
 - `src/mav/sim/dashboard/state.py`: `SimState` -> JSON-safe dict (the browser contract in one place; numpy scalars and NaN/inf handled by `_plain`).
 - `src/mav/sim/dashboard/bridge.py`: `Control` / `parse_control` (start, emergency, scenario, reset), `Bridge` protocol, `NullBridge` (default), `FakeBridge` (tests).
 - `src/mav/sim/dashboard/server.py`: stdlib `http.server` only, no new dependency. `GET /` `/state.json` `/lane.json` `/frame.jpg(?w=)` `/scenarios`, `POST /control`. Geometry (lane polyline + trail) is split into `/lane.json` so the fast `/state.json` poll stays small. `../` traversal in `/static/` is rejected.
