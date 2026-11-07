@@ -130,6 +130,53 @@ subagent against the JSON contract fixed in subtask 1; visual verification stays
 DONE 7 Nov 2026 (`8875d48`) — the whole dashboard task is finished except the user's visual
 check. Next: the real-recordings task below.
 
+## Current task: checkpoint / start-finish line detection (task 6 below)
+
+Why it matters: `cp` (checkpoints passed) is the biggest scoring term, and after a
+violation the robot is restarted at the last checkpoint — the count must survive
+that (the state machine already does; only the DETECTION is missing).
+
+Rules that shape the design (docs/ksti-mav-rules.md):
+- §6: checkpoints are shown in **green**; the start/finish line is "a colour
+  different from the track markings, **not necessarily red**". **[A11]**
+- [A11] resolution (from the rules doc itself): "Do not hardcode the start/finish
+  or checkpoint colours without confirmation; **design colour parameters to be
+  configurable**." So: hue ranges are config, defaults follow the guidebook text
+  and are documented as unconfirmed until read off the arena on test day.
+- §7.7: checkpoints must be passed in order (a counter enforces that by construction).
+- Lane markings are white OR black (§6) — the lane detector is colour-blind on
+  purpose; the cross-line detector is colour-FIRST (saturation + hue), which is
+  what keeps it independent of the marking colour.
+
+Split into 4 subtasks (one at a time, commit after each):
+
+- [x] 1. Core detector `src/mav/perception/checkpoint.py` (numpy-only, no cv2,
+      same contract as LaneDetector): HSV saturation mask (white/black/grey
+      markings and most floors stay below it) + configurable hue bands
+      (checkpoint/finish) + geometry (thin horizontal band spanning the lane).
+      Done when: `pytest tests/test_checkpoint.py` passes — green band detected,
+      white/black band rejected (unsaturated), red rejected while finish is
+      disabled and detected when configured, patch/tall-region/narrow-band
+      rejected, blank floor None, bad frame layout ValueError.
+      DONE 7 Nov 2026: 15 tests, full suite 146 passed (1 pre-existing failure
+      in the user's uncommitted lane.py WIP, unrelated). Defaults: checkpoint
+      hue 90-150 deg (green, per guidebook, UNCONFIRMED [A11]), finish
+      disabled. NOTE: lane.py's docstring still says "checkpoints not detected
+      here (later task)" - update that cross-reference when the user's lane.py
+      work lands (their file is uncommitted, do not mix).
+- [ ] 2. Event tracker + wiring: debounce (one event per physical crossing:
+      line enters from far, exits near — never counts a line the robot starts
+      sitting on), forward-only gating, feeds `RobotStateMachine.add_checkpoint()`;
+      finish line ends the run (`sm.finish()`, START ignored until new_attempt).
+      Done when: scripted frame sequences produce exactly one event per crossing,
+      resume keeps the count, and the existing state-machine tests still pass.
+- [ ] 3. Sim integration: render cross-lines in the sim camera layer (scenario
+      config: s-positions + colours), wire the tracker into `run_sim()`.
+      Done when: a closed-loop sim run passes N checkpoints and the count is N,
+      and emergency+resume mid-run keeps it.
+- [ ] 4. Config + docs: `checkpoint:` section in configs/ (colours + geometry,
+      defaults marked unconfirmed), AGENTS.md/PROGRESS.md updates.
+
 ## Next tasks (in order)
 
 1. **T2 follow-up — BLOCKED on a user decision (asked 7 Nov 2026).** The policy cannot
