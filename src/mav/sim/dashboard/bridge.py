@@ -16,7 +16,7 @@ from typing import Protocol
 import numpy as np
 
 from mav.sim.dashboard.state import SimState
-from mav.sim.scenarios import SCENARIOS
+from mav.sim.scenarios import scenario_names
 
 ACTIONS = ("start", "emergency", "scenario", "reset")
 
@@ -38,8 +38,9 @@ def parse_control(payload: object) -> Control:
         raise ValueError(f"unknown action {action!r}; have: {', '.join(ACTIONS)}")
     scenario = payload.get("scenario")
     if action == "scenario":
-        if scenario not in SCENARIOS:
-            raise ValueError(f"unknown scenario {scenario!r}; have: {', '.join(sorted(SCENARIOS))}")
+        known = scenario_names()
+        if scenario not in known:
+            raise ValueError(f"unknown scenario {scenario!r}; have: {', '.join(known)}")
     elif scenario is not None:
         raise ValueError("'scenario' is only valid with action='scenario'")
     return Control(action=action, scenario=scenario)

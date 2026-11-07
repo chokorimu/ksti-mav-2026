@@ -59,6 +59,21 @@ class LanePath:
         d = np.linalg.norm(np.diff(points, axis=0), axis=1)
         self.s = np.concatenate([[0.0], np.cumsum(d)])
 
+    @classmethod
+    def from_points(cls, points: np.ndarray, length_m: float | None = None) -> "LanePath":
+        """Wrap an already-sampled centreline (the measured track, a recording).
+
+        `build_path` integrates straights and arcs; this takes a polyline as-is.
+        `length_m` is the exact arc length when the caller knows it (an
+        integrated path does); without it the chord sum is used, which is what a
+        measured polyline wants anyway.
+        """
+        pts = np.asarray(points, dtype=np.float64)
+        if pts.ndim != 2 or pts.shape[1] != 2 or len(pts) < 2:
+            raise ValueError(f"expected an Nx2 polyline, got shape {pts.shape}")
+        d = np.linalg.norm(np.diff(pts, axis=0), axis=1)
+        return cls(pts, float(d.sum()) if length_m is None else float(length_m))
+
     def vehicle_frame(self, x: float, y: float, theta: float) -> tuple[np.ndarray, np.ndarray]:
         """Centreline points as (lateral right+, forward) relative to a pose."""
         c, s = math.cos(theta), math.sin(theta)
@@ -128,7 +143,7 @@ def build_path(
             s += ds
             total += ds
             pts.append((x, y))
-    return LanePath(np.array(pts, dtype=np.float64), total)
+    return LanePath.from_points(np.array(pts, dtype=np.float64), length_m=total)
 
 
 class SimWorld:
