@@ -1,0 +1,6 @@
+profile: sim
+camera: { source: sim }
+actuator: { type: sim }
+model: { path: models/prototype/ }
+debug: { enabled: true }
+network: { enabled: true }

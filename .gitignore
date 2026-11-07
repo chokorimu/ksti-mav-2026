@@ -1,0 +1,9 @@
+__pycache__/
+.venv/
+logs/*
+data/recordings/*
+# bobot model dan engine TensorRT tidak ikut git (engine terikat perangkat dan versi)
+models/**/*.onnx
+models/**/*.pt
+models/**/*.engine
+!**/.gitkeep

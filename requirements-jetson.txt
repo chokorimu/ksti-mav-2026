@@ -1,0 +1,3 @@
+pyyaml
+# OpenCV, numpy, TensorRT, PyTorch: pakai yang dari JetPack/NVIDIA,
+# jangan pip install versi x86. Versi menunggu hasil cek JetPack.

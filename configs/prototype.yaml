@@ -1,0 +1,6 @@
+profile: prototype
+camera: { source: null }      # csi atau usb, isi setelah kamera dipastikan
+actuator: { type: null }      # isi setelah motor driver dipastikan
+model: { path: models/prototype/ }
+debug: { enabled: true }
+network: { enabled: true }

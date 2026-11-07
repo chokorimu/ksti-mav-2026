@@ -1,0 +1,6 @@
+profile: deploy
+camera: { source: null }
+actuator: { type: null }
+model: { path: models/deploy/ }
+debug: { enabled: false }
+network: { enabled: false }   # lomba: tidak ada komunikasi ke robot
