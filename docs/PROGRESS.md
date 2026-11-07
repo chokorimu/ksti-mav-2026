@@ -151,12 +151,14 @@ check. Next: the real-recordings task below.
    `firmware/arduino/protocol.md` (ASCII lines `W`/`D`/`S`, 500 ms watchdog, boot-stopped),
    `SerialActuator` in `src/mav/io/actuator.py` (port injected, verb chosen by the mapper,
    pyserial imported lazily), `tests/test_serial_actuator.py` (11 tests, fake port).
-   Firmware scaffold DONE 7 Nov 2026, commit `8666501`: shared core
-   `firmware/arduino/MavCore/` (protocol.md parser + watchdog, board-agnostic C++,
-   unit-tested on the laptop with g++) + `prototype/prototype.ino` and
-   `final/final.ino` skeletons with the Q1 hardware constants deliberately empty.
-   Still open: fill the Q1 constants, write the output stages, `platformio.ini`,
-   flash test, and the m/s->PWM calibration wheels-lifted.
+   Firmware DONE 7 Nov 2026, commit `0553de5`: hardware confirmed (Arduino Uno,
+   L298N, LiPo 3S - wiring notes in docs/hardware.md). `firmware/arduino/` is now
+   two PlatformIO projects (`prototype/`, `final/`) sharing `lib/MavCore`
+   (protocol.md parser + watchdog, laptop-tested with g++). Both variants
+   COMPILE for the Uno (prototype 4966 B flash / 276 B RAM, final 5532 B /
+   317 B); pin maps and L298N output stages written. Still open: servo model +
+   range (final), the servo 5 V BEC, and the wheels-lifted m/s->PWM
+   calibration (both).
 6. Checkpoint / start-finish line detection. Not started. Split into subtasks before coding.
 7. ~~Web-simulator bridge~~ replaced by the web dashboard for the synthetic sim (current
    task above). The external web simulator is no longer needed; Q5 closed.
