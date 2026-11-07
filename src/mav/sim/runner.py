@@ -27,6 +27,7 @@ from mav.control.state_machine import RobotStateMachine
 from mav.io.actuator import CallbackActuator, SafeActuator
 from mav.io.camera import CallbackCamera
 from mav.io.buttons import Event, QueueButtons
+from mav.perception.checkpoint import CrossLineTracker
 from mav.perception.lane import LaneConfig, LaneDetector, lookahead_row
 from mav.planning.lane_policy import LanePolicy, LanePolicyConfig
 from mav.sim.dashboard.bridge import Bridge, NullBridge
@@ -54,6 +55,7 @@ class SimResult:
     stop_frames: int = 0
     crashed: bool = False
     finished: bool = False
+    checkpoints: int = 0
     history: list[tuple] = field(default_factory=list)
 
     @property
@@ -110,12 +112,16 @@ def run_sim(
     record: bool = True,
     bridge: Bridge | None = None,
     realtime: bool = False,
+    tracker: CrossLineTracker | None = None,
 ) -> SimResult:
     """Drive one scenario through the real step() loop. Never touches hardware.
 
     max_steps <= 0 runs until the scenario ends or a control stops it (dashboard).
     bridge: viewer that receives a SimState + frame per tick and can push controls.
     realtime: pace the loop to ~dt of wall time per tick, for watching.
+    tracker: optional cross-line tracker; its events feed the state machine
+        (checkpoint counted, finish ends the run). Without it the run is
+        bit-identical to the pre-tracker behaviour.
     """
     if isinstance(scenario, str):
         scenario = get_scenario(scenario)
@@ -140,6 +146,8 @@ def run_sim(
         cell["world"] = SimWorld(path, cfg)
         cell["res"] = SimResult(scenario=sc.name)
         sm.new_attempt()
+        if tracker is not None:
+            tracker.reset()
         sim_time[0] = 0.0
         w = cell["world"]
         cell["lane"] = _lane_points(w)
@@ -185,6 +193,17 @@ def run_sim(
             res.departures += int(abs(meas.offset_m) > DEPARTURE_M)
             res.max_abs_offset = max(res.max_abs_offset, abs(meas.offset_m))
             res.mean_abs_offset += abs(meas.offset_m)
+        if tracker is not None and frame is not None:
+            # Cross-line events: a checkpoint is counted, the finish line ends
+            # the run. One extra frame of motion after the finish line is
+            # accepted (the line is crossed at the bumper; the referee stops
+            # the attempt anyway).
+            ev = tracker.update(frame)
+            if ev is not None:
+                if ev.kind == "finish":
+                    _sm.finish()
+                else:
+                    _sm.add_checkpoint()
         cmd = pol.command(meas)
         if cmd == STOP:
             res.stop_frames += 1
@@ -292,6 +311,7 @@ def run_sim(
     res.mean_abs_offset /= max(1, res.detected)
     res.crashed = cell["world"].crashed
     res.finished = cell["world"].finished
+    res.checkpoints = sm.checkpoints
     return res
 
 

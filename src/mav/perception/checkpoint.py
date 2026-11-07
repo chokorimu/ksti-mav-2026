@@ -22,11 +22,12 @@ markings, not necessarily red" [A11] - so this detector is colour-FIRST:
 
 The output is a per-frame measurement, not an event. Counting crossings -
 one event per physical line, and never counting a line the robot starts
-sitting on - is added with the event logic on top of this module.
+sitting on - is CrossLineTracker's job, at the bottom of this module.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 
 import numpy as np
 
@@ -216,3 +217,122 @@ class CrossLineDetector:
             ),
             dbg,
         )
+
+
+@dataclass(frozen=True)
+class CrossLineEvent:
+    """One physical line was passed. Emitted once per crossing, never per frame."""
+
+    kind: str              # "checkpoint" | "finish"
+    row: float             # band row when the line was last seen
+    confidence: float      # confidence of that last measurement
+
+
+class _TrackState(Enum):
+    IDLE = "idle"          # no line in view
+    TRACKING = "tracking"  # line visible, still ahead of the robot
+    AT_EXIT = "at_exit"    # line level with / behind the robot
+
+
+class CrossLineTracker:
+    """Turns per-frame measurements into crossing events.
+
+    One event per physical line, with the two rules that matter on race day:
+
+    - A line must be SEEN APPROACHING (in the upper part of the frame) before
+      it counts. A line the robot starts sitting on - the start line at boot,
+      or the checkpoint it was just restarted at after a violation - is first
+      seen deep in the frame and never counts.
+    - After a line leaves the frame the tracker re-arms, so one line can never
+      fire twice, and rolling back over it does not fire either: it re-enters
+      from the bottom, i.e. not approaching.
+
+    A dropped detection frame does not end a crossing: the line must be gone
+    for `min_gone_frames` consecutive frames. Losing the line while it is
+    still approaching (state TRACKING) loses that count - deliberately
+    conservative: better to undercount than to count a line never passed.
+
+    The tracker is state-machine-agnostic on purpose: it emits events, and the
+    caller decides what they mean (add_checkpoint / finish). That keeps
+    perception free of control imports and the tracker testable on scripted
+    frame sequences.
+    """
+
+    def __init__(
+        self,
+        detector: CrossLineDetector | None = None,
+        *,
+        exit_row_frac: float = 0.8,
+        min_gone_frames: int = 2,
+    ) -> None:
+        self.detector = detector or CrossLineDetector()
+        self.exit_row_frac = exit_row_frac
+        self.min_gone_frames = max(1, int(min_gone_frames))
+        self.state = _TrackState.IDLE
+        self.approaching = False
+        self.gone = 0
+        self.last_row: float | None = None
+        self.last_kind: str | None = None
+        self.last_confidence = 0.0
+
+    def reset(self) -> None:
+        """Forget everything (new attempt / scenario change)."""
+        self.state = _TrackState.IDLE
+        self.approaching = False
+        self.gone = 0
+        self.last_row = None
+        self.last_kind = None
+        self.last_confidence = 0.0
+
+    @property
+    def debug(self) -> dict:
+        """JSON-safe tracker state, for the dashboard overlay."""
+        return {
+            "state": self.state.value,
+            "approaching": self.approaching,
+            "gone": self.gone,
+            "last_row": self.last_row,
+            "last_kind": self.last_kind,
+        }
+
+    def update(self, frame: np.ndarray) -> CrossLineEvent | None:
+        """Feed one frame. Returns an event the frame the crossing completed."""
+        m = self.detector.detect(frame)
+        if m is None:
+            return self._on_gone()
+        self.gone = 0
+        self.last_row = m.row
+        self.last_kind = m.kind
+        self.last_confidence = m.confidence
+        at_exit = m.row >= self.exit_row_frac * self._frame_rows(frame)
+        if self.state is _TrackState.IDLE:
+            # First sighting: deep in the frame means the robot is sitting on
+            # (or just past) the line - the start line, or a restart checkpoint.
+            self.state = _TrackState.AT_EXIT if at_exit else _TrackState.TRACKING
+            self.approaching = self.state is _TrackState.TRACKING
+        elif self.state is _TrackState.TRACKING and at_exit:
+            self.state = _TrackState.AT_EXIT
+        return None
+
+    def _on_gone(self) -> CrossLineEvent | None:
+        if self.state is _TrackState.IDLE:
+            self.gone = 0
+            return None
+        self.gone += 1
+        if self.gone < self.min_gone_frames:
+            return None  # one dropped frame is not a crossing
+        fired = (
+            self.state is _TrackState.AT_EXIT
+            and self.approaching
+        )
+        kind, row, conf = self.last_kind, self.last_row, self.last_confidence
+        self.state = _TrackState.IDLE
+        self.approaching = False
+        self.gone = 0
+        if fired and kind is not None and row is not None:
+            return CrossLineEvent(kind=kind, row=row, confidence=conf)
+        return None
+
+    @staticmethod
+    def _frame_rows(frame: np.ndarray) -> int:
+        return int(np.asarray(frame).shape[0])

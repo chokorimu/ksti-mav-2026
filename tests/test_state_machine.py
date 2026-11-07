@@ -61,3 +61,36 @@ def test_new_attempt_is_explicit_and_resets():
     sm.handle(Event.EMERGENCY)
     sm.new_attempt()
     assert sm.state is State.WAIT_START and sm.checkpoints == 0
+
+
+def test_finish_stops_and_is_not_resumable():
+    sm = running_machine()
+    sm.add_checkpoint()
+    assert sm.finish() is True
+    assert sm.state is State.STOPPED
+    assert sm.finished is True
+    sm.handle(Event.START)  # a finished attempt is over, not paused
+    assert sm.state is State.STOPPED
+    assert sm.checkpoints == 1  # count kept for reporting
+    sm.new_attempt()
+    sm.handle(Event.START)
+    assert sm.state is State.RUN and sm.checkpoints == 0 and sm.finished is False
+
+
+def test_finish_only_while_running():
+    sm = RobotStateMachine()
+    assert sm.finish() is False
+    assert sm.finished is False
+    sm.boot_done()
+    assert sm.finish() is False  # waiting for start is not a run to finish
+    sm.handle(Event.START)
+    assert sm.finish() is True
+
+
+def test_emergency_after_finish_keeps_the_run_finished():
+    sm = running_machine()
+    sm.finish()
+    sm.handle(Event.EMERGENCY)
+    assert sm.state is State.STOPPED and sm.finished is True
+    sm.handle(Event.START)
+    assert sm.state is State.STOPPED

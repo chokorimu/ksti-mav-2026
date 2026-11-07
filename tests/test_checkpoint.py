@@ -9,7 +9,11 @@ import time
 import numpy as np
 import pytest
 
-from mav.perception.checkpoint import CheckpointConfig, CrossLineDetector
+from mav.perception.checkpoint import (
+    CheckpointConfig,
+    CrossLineDetector,
+    CrossLineTracker,
+)
 from mav.perception.lane import LaneDetector
 from synthetic_lane import make_frame
 
@@ -161,3 +165,110 @@ def test_latency_smoke():
         det.detect(frame)
     mean_ms = (time.perf_counter() - t0) / 20 * 1000.0
     assert mean_ms < 20.0, f"{mean_ms:.2f} ms/frame"
+
+
+# ---- tracker: one event per physical line --------------------------------
+# Frame height is 360, so the default exit row is 0.8 * 360 = 288: a band at
+# row 200 is "approaching", a band at row 300+ is "level with the robot".
+
+
+def band_frame(row, color=GREEN, half_width_px=33, seed=20):
+    return paint_band(
+        make_frame(seed=seed), y0=row, y1=row + 4, color_bgr=color,
+        half_width_px=half_width_px,
+    )
+
+
+def feed(tracker, rows, color=GREEN):
+    """Feed a scripted sequence; None = a frame with no line. Returns events."""
+    events = []
+    for r in rows:
+        frame = (
+            band_frame(r, color=color)
+            if r is not None
+            else make_frame(draw_lane=False, seed=99)
+        )
+        ev = tracker.update(frame)
+        if ev is not None:
+            events.append(ev)
+    return events
+
+
+def test_line_approaching_and_leaving_fires_exactly_once():
+    tr = CrossLineTracker()
+    events = feed(tr, [100, 150, 200, 250, 300, 320, None, None])
+    assert len(events) == 1
+    assert events[0].kind == "checkpoint"
+
+
+def test_line_first_seen_deep_never_counts():
+    # Boot on the start line, or a restart placed on the last checkpoint:
+    # the line is first seen at the bumper, so it was never approached.
+    tr = CrossLineTracker()
+    assert feed(tr, [340, None, None]) == []
+
+
+def test_no_double_fire_while_line_stays_visible():
+    tr = CrossLineTracker()
+    events = feed(tr, [100, 200, 300, 320, 330, None, None])
+    assert len(events) == 1
+    # A dropped frame mid-crossing does not end it either.
+    tr2 = CrossLineTracker()
+    events2 = feed(tr2, [100, 200, 300, None, 320, None, None])
+    assert len(events2) == 1
+
+
+def test_single_dropped_frame_is_not_a_crossing():
+    tr = CrossLineTracker()
+    assert feed(tr, [100, 300, None]) == []  # gone for 1 frame only
+
+
+def test_rolling_back_over_a_line_does_not_recount():
+    tr = CrossLineTracker()
+    assert len(feed(tr, [100, 200, 300, None, None])) == 1
+    # The same line re-enters from the bottom: not approaching, no event.
+    assert feed(tr, [340, None, None]) == []
+
+
+def test_line_lost_while_approaching_does_not_count():
+    tr = CrossLineTracker()
+    assert feed(tr, [100, 150, None, None]) == []
+    # ...and when it reappears it is already deep, so it still does not count.
+    assert feed(tr, [300, None, None]) == []
+
+
+def test_finish_line_event_kind():
+    tr = CrossLineTracker(CrossLineDetector(FINISH_CFG))
+    events = feed(tr, [100, 200, 300, None, None], color=RED)
+    assert len(events) == 1
+    assert events[0].kind == "finish"
+
+
+def test_tracker_reset_forgets_state():
+    tr = CrossLineTracker()
+    feed(tr, [100, 200, 300])  # mid-crossing
+    tr.reset()
+    assert tr.state.value == "idle"
+    assert feed(tr, [340, None, None]) == []
+
+
+def test_tracker_debug_is_json_safe():
+    import json
+
+    tr = CrossLineTracker()
+    feed(tr, [100, 300])
+    json.dumps(tr.debug)  # must not raise
+
+
+def test_tracker_does_not_change_a_run_without_lines():
+    # No cross-lines are rendered yet (subtask 3), so attaching a tracker must
+    # leave the run bit-identical - the same guarantee the dashboard has.
+    from mav.sim.runner import run_sim
+
+    plain = run_sim("straight", seed=3)
+    tracked = run_sim("straight", seed=3, tracker=CrossLineTracker())
+    assert tracked.checkpoints == 0
+    assert (tracked.steps, tracked.detected, tracked.lost, tracked.distance_m) == (
+        plain.steps, plain.detected, plain.lost, plain.distance_m,
+    )
+

@@ -80,6 +80,51 @@ Candidate fixes (NOT decided — waiting on the user):
 - Policy: the speed law multiplying by confidence turns a detector problem into a
   motion problem — a detector artefact should not be able to stop the robot.
 
+### T2 update: the detector fix is IN (7 Nov 2026, commit `fcccf2a`)
+
+The user chose "detektor dulu". Two changes in `src/mav/perception/lane.py`:
+`roi_top` 0.45 → **0.65** (a shallower integration window) and a new
+`LaneConfig.max_band_span_m = 0.8` that drops any band whose marking is smeared
+across the image (where the track is tight the lane runs ALONG a band instead of
+across it, so its centroid is meaningless — errors up to 85 px measured).
+6 new tests in `tests/test_lane.py`; full suite **147 passed** (laptop).
+
+Same measurement, same 1200 ticks, seeds 0/1/2:
+
+| metric | before | after |
+|---|---|---|
+| lap covered | 1.26 m (6.5%) | **1.73 m (8.9%)** |
+| detection rate | 9.1% | 11.5% |
+| mean \|offset\| | 0.081 m | 0.053 m |
+| fit residual | mean 42 px | mean 10.4 / max 25.7 px |
+| confidence | capped ~0.31 | mean 0.713 / min 0.308 |
+
+The detector is healthy now — but **the robot still dies**, at s=1.75 m (t≈153).
+The remaining cause is pure geometry, and it is NOT fixable by tuning:
+
+- At s=1.75 m the local radius is **0.73 m**, so the 0.83 m lookahead is already
+  past the 90° point of that corner: the lane wraps inside the ROI no matter how
+  clean the mask is.
+- Proof: a **noiseless camera changes nothing** (1.73 → 1.71 m). The smearing is
+  geometric, not sensor noise.
+- Sweeping `roi_top` 0.60 → 0.90 improves the measured track monotonically
+  (1.60 → 2.24 m) but wrecks `s_curve` monotonically (0 → 271 departures).
+  **No single fixed `roi_top` wins both** — that is the case for an adaptive
+  lookahead, not for another constant.
+- Even at the best setting the robot reaches only 11.6% of the lap, still ~10 m
+  before the 0.46 m corner at s=12.59 m.
+
+Still true and unchanged: the 1.5 m steering clamp is NOT the binding constraint
+(0% saturation). The robot dies of low speed long before it needs the clamp.
+
+**Next decision needed (asked 7 Nov 2026, not yet answered):** adaptive lookahead
+(`roi_top`/`lookahead_frac` driven by the measured curvature — shallow in a tight
+corner, deep on a straight) versus accepting the fixed 0.65 and moving to the
+policy's deadlock (`on_lost="stop"` makes any single lost frame a permanent stop,
+which is a robustness bug independent of the detector). Note the sim camera is
+ideal (perfect markings, known geometry) — the real robot will be worse, so
+detector tuning against this synthetic track has limited value.
+
 ## Current task: web dashboard for the sim (user request, 7 Nov 2026)
 
 Goal: browser dashboard with a 3D top-view arena, a 3D car, a live camera panel with the
@@ -164,12 +209,18 @@ Split into 4 subtasks (one at a time, commit after each):
       disabled. NOTE: lane.py's docstring still says "checkpoints not detected
       here (later task)" - update that cross-reference when the user's lane.py
       work lands (their file is uncommitted, do not mix).
-- [ ] 2. Event tracker + wiring: debounce (one event per physical crossing:
+- [x] 2. Event tracker + wiring: debounce (one event per physical crossing:
       line enters from far, exits near — never counts a line the robot starts
       sitting on), forward-only gating, feeds `RobotStateMachine.add_checkpoint()`;
       finish line ends the run (`sm.finish()`, START ignored until new_attempt).
       Done when: scripted frame sequences produce exactly one event per crossing,
       resume keeps the count, and the existing state-machine tests still pass.
+      DONE 7 Nov 2026: `CrossLineTracker` (IDLE/TRACKING/AT_EXIT, re-arms when
+      the line leaves the frame, 2-frame dropout tolerance), `RobotStateMachine
+      .finish()` (STOPPED + not resumable until new_attempt, count kept),
+      `run_sim(tracker=...)` wires events into the state machine and reports
+      `SimResult.checkpoints`. Tracker without rendered lines leaves the run
+      bit-identical (asserted by a test). 20 new tests; full suite 160 passed.
 - [ ] 3. Sim integration: render cross-lines in the sim camera layer (scenario
       config: s-positions + colours), wire the tracker into `run_sim()`.
       Done when: a closed-loop sim run passes N checkpoints and the count is N,
