@@ -2,3 +2,4 @@ numpy<2
 pyyaml
 opencv-python-headless~=4.8.0
 pytest
+platformio   # firmware build/flash for the Arduino (firmware/arduino/)

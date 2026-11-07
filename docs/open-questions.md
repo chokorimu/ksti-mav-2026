@@ -8,14 +8,22 @@ Last updated: 7 November 2026.
 ## Q1 — Motor/servo driver and GPIO pins [PARTLY ANSWERED 7 Nov 2026]
 Decided: Arduino over USB serial drives the motor driver and servo; the Jetson 40-pin
 header is not used for actuators.
+Answered 7 Nov 2026: **Arduino Uno**, motor driver **L298N**, battery **LiPo 3S**
+(11.1 V nominal). Pin map chosen by us and written down in `docs/hardware.md`
+(prototype: ENA=3, IN1=2, IN2=4 / ENB=11, IN3=7, IN4=8; final: servo=5, ENA=3,
+IN1=2, IN2=4). If the robot is already wired differently, say so - the constants in
+`firmware/arduino/src/*/` and the doc must both be corrected.
 Still needed for the Arduino firmware and the power design:
-- Arduino model (Uno/Nano/ESP32?) and motor driver model (L298N/DRV8833/TB6612/4WD shield?).
-- Which Arduino pins, and the servo model + angle range.
-- Battery type/voltage, and the 5 V rail for motors/servo (BEC/UBEC, never the Arduino 5 V pin).
+- Servo model + its measured microsecond range (blocks the servo constants in
+  `final/src/final.ino`).
+- The servo 5 V rail: BEC/UBEC model and rating (never the L298N regulator, never
+  the Arduino 5 V pin).
+- Which supply feeds the Jetson itself (its own regulator/battery path - the motor
+  rail must not brown it out).
 - Emergency stop circuit: what does it cut? Recommendation: cut the motor power rail in
   hardware (relay/MOSFET), independent of any software.
-Blocks: the Arduino firmware in `firmware/arduino/` (the host-side SerialActuator can be
-written now).
+Blocks: the servo constants + the wheels-lifted speed calibration in the firmware
+(`firmware/arduino/`). The firmware itself compiles for the Uno already.
 
 ## Q2 — Camera model and interface [ANSWERED 7 Nov 2026]
 CSI, Raspberry Pi camera module. Exact module (v1/v2/v3/GS) to verify on the device.

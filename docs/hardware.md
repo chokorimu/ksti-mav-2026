@@ -15,7 +15,45 @@ Only facts confirmed by the user are in "Confirmed". Everything else is a questi
 - Motor/servo control path: **Arduino over USB serial** (user decision, 7 Nov 2026).
   Jetson stays the CV brain; the Arduino drives the motor driver and servo. The Jetson
   40-pin header is NOT used for actuators (3.3 V logic, mA-level current, not real-time).
-  The Arduino firmware goes in `firmware/arduino/` (not written yet, blocked on Q1).
+  The Arduino firmware goes in `firmware/arduino/` (compiles for the Uno; the speed
+  calibration and the servo range are still open).
+- **MCU: Arduino Uno** (user, 7 Nov 2026). ATmega328P, 16 MHz, 5 V logic, 2 KB RAM,
+  31.5 KB flash. USB serial through the ATmega16U2, so the 115200 baud in
+  `firmware/arduino/protocol.md` matters on this board. Verified firmware size:
+  prototype 4966 B flash / 276 B RAM, final 5532 B / 317 B.
+- **Motor driver: L298N** (user, 7 Nov 2026). Dual H-bridge, two channels (A and B),
+  each channel IN1/IN2 + ENA. Logic is 5 V, same as the Uno: connect IN/EN directly,
+  no level shifter. The L298N drops ~2-3 V across its outputs, so the motors see
+  ~8-9 V from a 3S pack.
+- **Battery: LiPo 3S** (user, 7 Nov 2026) = 11.1 V nominal, 12.6 V full, ~9.9-10.5 V
+  empty (3.3-3.5 V per cell). Feeds the L298N +12 V input through a fuse.
+
+## Electrical notes for the Arduino + L298N wiring (plain language)
+
+- **Common ground is mandatory.** L298N GND, Arduino GND and battery - must all be one
+  node. Without it nothing works, and it is the number one wiring bug.
+- **Remove the ENA/ENB jumpers** on the L298N, otherwise both channels run at full
+  speed and PWM speed control does nothing.
+- **Prototype wiring (4 motors as 2 channels):** both left wheels on L298N channel A,
+  both right wheels on channel B; skid steering is the speed difference between them.
+  Pin map (our choice, 7 Nov 2026, wire exactly like this):
+  ENA=3, IN1=2, IN2=4 (left) / ENB=11, IN3=7, IN4=8 (right). ENA/ENB use the Uno's
+  ~490 Hz PWM pins; pins 5/6 (~980 Hz) deliberately unused.
+- **Final wiring:** rear motor on channel A (ENA=3, IN1=2, IN2=4), steering servo
+  signal on pin 5. The Servo library takes over Timer1, so PWM on pins 9/10 stops
+  working - not needed on this robot.
+- **Powering the Uno:** simplest is USB from the Jetson (it also carries the serial
+  link). Alternative: the L298N's own 5 V output into the Uno's **5V pin** - never
+  into VIN (the Uno's regulator needs ~6.5 V or more), and never with USB connected
+  at the same time (that backfeeds the port).
+- **Servo 5 V rail - still open (Q1):** NOT from the L298N's onboard regulator and NOT
+  from the Uno 5 V pin. A stalling servo pulls hundreds of mA to amps and browns out
+  the logic. Use a separate BEC/UBEC (5-6 V, >=2 A) from the same 3S pack.
+- **LiPo handling:** fuse on the main path, low-voltage alarm, never below 3.0 V per
+  cell, balance charge only, inspect the pack before every attempt.
+- **Heat/current:** the L298N gets hot at high current. Watch it during the
+  wheels-lifted test; the Jetson keeps its own separate power path (brownout rule in
+  docs/research-plan.md).
 - `scripts/setup_jetson.sh` runs on the Jetson (PyYAML 5.4.1 comes from the system packages).
 
 ## Verified on the Jetson (from the user's command output)

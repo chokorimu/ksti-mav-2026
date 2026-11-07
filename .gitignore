@@ -10,3 +10,5 @@ models/**/*.engine
 # Scratch space: the arena-3d tool, the ONNX model, draft frontends. Nothing in
 # here is a build input -- whatever we actually use gets copied into src/ first.
 temp/
+# PlatformIO build artifacts (firmware/arduino/*/.pio/)
+.pio/

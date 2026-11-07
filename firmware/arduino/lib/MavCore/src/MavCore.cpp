@@ -1,7 +1,10 @@
 #include "MavCore.h"
 
-#include <cstdlib>
-#include <cstring>
+// C headers, not <cstdlib>/<cstring>: the PlatformIO AVR toolchain ships
+// avr-libc's C headers but not the C++ standard library headers, and on a
+// 2 KB-RAM microcontroller the C ones are the idiomatic choice anyway.
+#include <stdlib.h>
+#include <string.h>
 
 namespace mav {
 
@@ -14,19 +17,19 @@ bool LineProtocol::is_space(char c) {
 
 bool LineProtocol::feed(const char* line, unsigned long now_ms) {
   char buf[64];
-  size_t n = std::strlen(line);
+  size_t n = strlen(line);
   while (n > 0 && is_space(line[n - 1])) --n;
   if (n == 0 || n >= sizeof(buf)) {
     ++bad_lines_;
     return false;
   }
-  std::memcpy(buf, line, n);
+  memcpy(buf, line, n);
   buf[n] = '\0';
 
-  char* verb_end = std::strchr(buf, ' ');
+  char* verb_end = strchr(buf, ' ');
   if (verb_end == nullptr) {
     // Single-token line: only "S" is valid.
-    if (std::strcmp(buf, "S") == 0) {
+    if (strcmp(buf, "S") == 0) {
       last_verb_ = 'S';
       timed_out_ = false;  // a valid line re-arms the watchdog
       last_valid_ms_ = now_ms;
@@ -39,8 +42,8 @@ bool LineProtocol::feed(const char* line, unsigned long now_ms) {
   char* rest = verb_end + 1;
   while (*rest == ' ') ++rest;
 
-  const bool is_w = std::strcmp(buf, "W") == 0;
-  const bool is_d = std::strcmp(buf, "D") == 0;
+  const bool is_w = strcmp(buf, "W") == 0;
+  const bool is_d = strcmp(buf, "D") == 0;
   if (!is_w && !is_d) {
     ++bad_lines_;
     return false;
@@ -59,12 +62,12 @@ bool LineProtocol::feed(const char* line, unsigned long now_ms) {
 
 bool LineProtocol::parse_two_floats(char* rest, float& a, float& b) {
   char* end1 = nullptr;
-  const double v1 = std::strtod(rest, &end1);
+  const double v1 = strtod(rest, &end1);
   if (end1 == rest) return false;  // no number at all
   while (*end1 == ' ') ++end1;
 
   char* end2 = nullptr;
-  const double v2 = std::strtod(end1, &end2);
+  const double v2 = strtod(end1, &end2);
   if (end2 == end1) return false;  // second number missing
   while (*end2 == ' ') ++end2;
   if (*end2 != '\0') return false;  // trailing garbage
