@@ -8,6 +8,7 @@ from __future__ import annotations
 import time
 from typing import Callable, Protocol
 
+from mav.control.mapping import SteerDrive, WheelSpeeds
 from mav.types import STOP, Command
 
 
@@ -43,6 +44,49 @@ class CallbackActuator:
 
     def stop(self) -> None:
         self._send(STOP)
+
+
+class SerialActuator:
+    """Real actuator: sends mapped commands to the Arduino over USB serial.
+
+    The mapper (DifferentialMapper for prototype, AckermannMapper for final)
+    converts the vehicle-agnostic Command into hardware values; this class
+    serialises them per firmware/arduino/protocol.md ("W left right" or
+    "D steer_rad speed"). Wrap in SafeActuator: stopped default, clamp,
+    command timeout.
+
+    The port is injected: tests pass a fake port, production passes
+    open_serial_port(...). pyserial is deliberately NOT imported here, so the
+    test suite runs on machines that do not have it.
+    """
+
+    BAUDRATE = 115200
+
+    def __init__(self, mapper, port) -> None:
+        self._mapper = mapper
+        self._port = port
+
+    def set(self, cmd: Command) -> None:
+        out = self._mapper.map(cmd)
+        if isinstance(out, WheelSpeeds):
+            line = f"W {out.left:.3f} {out.right:.3f}\n"
+        elif isinstance(out, SteerDrive):
+            line = f"D {out.steer_rad:.4f} {out.speed:.3f}\n"
+        else:
+            raise TypeError(f"unsupported mapper output: {type(out).__name__}")
+        self._port.write(line.encode("ascii"))
+
+    def stop(self) -> None:
+        self._port.write(b"S\n")
+
+
+def open_serial_port(port: str, baudrate: int = SerialActuator.BAUDRATE):
+    """Open a pyserial port for SerialActuator. Imported lazily so tests (and
+    machines without pyserial) never need it. Install: pip install pyserial
+    (on the Jetson, sudo apt install python3-serial also works)."""
+    import serial
+
+    return serial.Serial(port, baudrate, timeout=0)
 
 
 class SafeActuator:
