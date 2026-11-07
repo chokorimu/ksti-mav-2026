@@ -1,15 +1,17 @@
 """Synthetic track frames for lane-detection tests (no camera, no cv2 needed).
 
-Draws a 50 cm lane (two continuous edge lines + dashed centre line) on a noisy
-floor, through either an affine or a first-order perspective ("taper")
-projection, so tests can assert exact numbers (affine) and realistic
-scale-variation behaviour (taper).
+Thin wrapper over `mav.sim.render.render_frame`: draws a 50 cm lane (two
+continuous edge lines + dashed centre line) on a noisy floor, through either an
+affine or a first-order perspective ("taper") projection, so tests can assert
+exact numbers (affine) and realistic scale-variation behaviour (taper).
 
 Conventions match the detector: X right, Y forward, curvature > 0 = left turn.
 """
 from __future__ import annotations
 
 import numpy as np
+
+from mav.sim.render import render_frame
 
 AFFINE_DEFAULTS = dict(px_per_m=130.0, y_near_m=0.35)
 TAPER_DEFAULTS = dict(px_per_m=130.0, y_near_m=0.35, taper=0.25)
@@ -45,52 +47,31 @@ def make_frame(
     """
     if projection not in ("affine", "taper"):
         raise ValueError(projection)
-    rng = np.random.default_rng(seed)
-    h, w = size
-    cx = w / 2.0
-
-    floor = np.array(floor_bgr, dtype=np.float32) * brightness
-    img = np.broadcast_to(floor, (h, w, 3)).copy()
-    if noise > 0:
-        img += rng.normal(0.0, noise, (h, w, 3)).astype(np.float32)
-
-    mark_val = 235.0 if marking == "white" else 15.0
-    mark = np.array([mark_val] * 3, dtype=np.float32) * brightness
-
     s = kw.get("px_per_m", TAPER_DEFAULTS["px_per_m"])
     y_near = kw.get("y_near_m", TAPER_DEFAULTS["y_near_m"])
     taper = kw.get("taper", TAPER_DEFAULTS["taper"]) if projection == "taper" else 0.0
-    span = max(y_far_m - y_near, 1e-6)
-
-    def to_px(x: float, y: float) -> tuple[float, float]:
-        s_y = s * (1.0 - taper * (y - y_near) / span)
-        return cx + s_y * x, (h - 1) - s * (y - y_near)
-
-    def half_thickness(y: float) -> float:
-        return s * (1.0 - taper * (y - y_near) / span) * line_width_m / 2.0
 
     def centre_x(y: float) -> float:
         return offset_m - 0.5 * curvature * (y - y_near) ** 2
 
-    def paint(x: float, y: float) -> None:
-        u, v = to_px(x, y)
-        ui, vi = int(round(u)), int(round(v))
-        if not (0 <= ui < w and 0 <= vi < h):
-            return
-        r = max(1, int(round(half_thickness(y))))
-        img[max(0, vi - r):vi + r + 1, max(0, ui - r):ui + r + 1] = mark
-
-    y = y_near
-    while y <= y_far_m:
-        if draw_lane:
-            xc = centre_x(y)
-            paint(xc - lane_width_m / 2.0, y)
-            paint(xc + lane_width_m / 2.0, y)
-            if (y - y_near) % (dash_m + gap_m) < dash_m:  # dashed centre line
-                paint(xc, y)
-        y += 0.005
-
-    return np.clip(img, 0, 255).astype(np.uint8)
+    return render_frame(
+        centre_x,
+        y_near_m=y_near,
+        y_far_m=y_far_m,
+        px_per_m=s,
+        taper=taper,
+        lane_width_m=lane_width_m,
+        line_width_m=line_width_m,
+        dash_m=dash_m,
+        gap_m=gap_m,
+        marking=marking,
+        floor_bgr=floor_bgr,
+        brightness=brightness,
+        noise=noise,
+        size=size,
+        rng=np.random.default_rng(seed),
+        draw_lane=draw_lane,
+    )
 
 
 def expected_offset_affine(

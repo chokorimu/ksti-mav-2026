@@ -25,11 +25,21 @@ Technical Meeting: 8 Nov 2026. Competition: 12 Nov 2026. Priority is a robot tha
 - On the Jetson: Python 3.10.12, OpenCV 4.8.0 (GStreamer yes, no CUDA line), CUDA 12.6, cuDNN 9.3, TensorRT 10.3 runtime. Power mode `MAXN_SUPER`.
 - `scripts/setup_jetson.sh` ran successfully.
 - The full `nvidia-jetpack` package is NOT installed (connection problems). TensorRT dev tools and Python bindings are unconfirmed. Not needed for classical CV.
-- 48 unit tests passed on the development laptop (Python 3.14.8, numpy 2.5.4, OpenCV 5.0.0). **They have not been run on the Jetson (Python 3.10).** Run `pytest` there first and report failures.
+- 57 unit tests passed on the development laptop (Python 3.14.8, numpy 2.5.4, OpenCV 5.0.0). **They have not been run on the Jetson (Python 3.10).** Run `pytest` there first and report failures.
 
 ## Code that exists (see `AGENTS.md` for the module list)
 Command type, camera/actuator/button interfaces, SafeActuator, differential and Ackermann mappers, state machine, `step()`.
 Classical lane detector (`src/mav/perception/lane.py`, numpy-only) and a conservative lane policy (`src/mav/planning/lane_policy.py`), both with tests on synthetic frames.
+Closed-loop synthetic simulator (`src/mav/sim/`): world + renderer + scenarios + runner. It runs the real `step()`, detector and policy; only the camera and actuator layers are simulated.
+
+## Synthetic closed-loop simulator (done on the laptop, 7 Nov 2026)
+- `src/mav/sim/world.py`: exact constant-curvature pose integration (X right, Y forward, heading left-positive), lane polyline, camera model with first-order perspective taper.
+- `src/mav/sim/render.py`: shared numpy-only frame renderer; `tests/synthetic_lane.py` now delegates to it (detector tests unchanged).
+- `src/mav/sim/scenarios.py`: straight / offset / curve (90° at R=2 m) / s_curve.
+- `src/mav/sim/runner.py`: `run_sim()` drives `mav.app.step` with `CallbackCamera`/`CallbackActuator`; metrics = detection rate, mean/max |offset|, departures, crashes; CLI with `--overlay`.
+- `scripts/run.sh sim` dispatches to it (defaults from `configs/sim.yaml` section `sim:`).
+- Results (laptop): straight and offset finish the 12 m with 100% detection and mean |offset| 0.004/0.023 m; curve and s_curve keep 100% detection inside the 0.6 m corridor with mean |offset| 0.14/0.18 m (pure-pursuit lag, no feedforward yet). 9 tests in `tests/test_sim.py`.
+- Bug the closed loop exposed (fixed): a path wrapping >180° re-entered the camera's forward window and corrupted the interpolation. `centre_x_fn` now follows the branch the vehicle is driving on, selected by arc length.
 
 ## Not done (do not invent these; ask for the facts first)
 - Real motor/servo drivers and GPIO buttons: how the motors and servo are driven is unknown.
@@ -50,6 +60,7 @@ Classical lane detector (`src/mav/perception/lane.py`, numpy-only) and a conserv
 3. ~~Build classical lane detection~~ done as v1 above; now: run it offline on the recordings and recalibrate `px_per_m` / `bottom_row_m` from them.
 4. Run it offline on the recordings first. Measure per-frame latency on the Jetson.
 5. Do not connect it to real actuators until the hardware questions below are answered.
+6. Tune the policy against the synthetic sim (`scripts/run.sh sim curve`) — curvature feedforward is the known gap; then re-run the detector on real recordings.
 - Proposed command (needs approval before it goes into `AGENTS.md`): `PYTHONPATH=src python -m mav.perception.lane <video> [--overlay out.mp4]` from the repo root.
 
 ## Open questions for the user

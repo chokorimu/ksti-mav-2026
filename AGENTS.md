@@ -60,7 +60,7 @@ Select via configuration, not by editing code.
 AGENTS.md
 docs/        ksti-mav-rules.md, research-plan.md, hardware.md
 configs/     sim.yaml, prototype.yaml, deploy.yaml
-src/         perception/, planning/, control/, io/ (camera, actuator: sim & real)
+src/         perception/, planning/, control/, io/ (camera, actuator: sim & real), sim/
 models/      prototype/, deploy/
 scripts/     setup_dev.sh, setup_jetson.sh, run.sh
 tests/
@@ -77,7 +77,14 @@ tests/
 - `src/mav/perception/lane.py`: LaneDetector (numpy-only), offline runner
     `PYTHONPATH=src python -m mav.perception.lane <video> [--overlay out.mp4]`.
 - `src/mav/planning/lane_policy.py`: LanePolicy (measurement -> Command, pure-pursuit). Both have tests on synthetic frames.
-- **Not written yet:** real motor/servo drivers, GPIO buttons, checkpoint detection, and the simulator bridge. Do not invent them; ask for the hardware facts in `docs/hardware.md` first.
+- `src/mav/sim/` (synthetic closed-loop simulator, no hardware): `world.py` (exact
+    constant-curvature pose integration, lane polyline, camera model with taper),
+    `render.py` (shared numpy-only frame renderer, also used by `tests/synthetic_lane.py`),
+    `scenarios.py` (straight / offset / curve / s_curve), `runner.py` (`run_sim()` drives
+    the real `mav.app.step` with the real detector and policy; only the camera and actuator
+    layers are simulated). CLI: `PYTHONPATH=src python -m mav.sim.runner [scenario]
+    [--steps N] [--dt S] [--seed S] [--overlay out.mp4] [--list]`. Tests: `tests/test_sim.py`.
+- **Not written yet:** real motor/servo drivers, GPIO buttons, checkpoint detection, and the web-simulator bridge (the synthetic sim above is done). Do not invent them; ask for the hardware facts in `docs/hardware.md` first.
 
 ## Long-running work protocol (anti-drift)
 
@@ -111,7 +118,9 @@ Run all commands from the repo root. Use bash.
 - Dev setup (laptop, x86_64): `scripts/setup_dev.sh`
 - Jetson setup (Orin Nano, aarch64): `scripts/setup_jetson.sh` (uses `--system-site-packages` so JetPack's OpenCV/TensorRT stay visible; do not pip-install x86 wheels there)
 - Run a profile: `scripts/run.sh <sim|prototype|deploy>`. Currently this only loads and prints the profile config; the actual pipeline is not wired yet.
-- Run sim: `scripts/run.sh sim`. The web simulator's own launch command is _TBD_ (its stack and frame/command interface are not yet known).
+- Run sim: `scripts/run.sh sim [scenario]` (synthetic closed-loop sim; defaults from
+  `configs/sim.yaml` section `sim:`). The web simulator's own launch command is _TBD_
+  (its stack and frame/command interface are not yet known).
 - Run on Jetson: `scripts/run.sh prototype` (debug on) or `scripts/run.sh deploy` (no debug, no network). Use the same `sudo nvpmodel` mode as the competition.
 - Tests: `source .venv/bin/activate && pytest` (on the Jetson install pytest first: `pip install pytest`, or `sudo apt install python3-pytest`)
 - Check JetPack (on the Jetson, before any version-dependent install): `cat /etc/nv_tegra_release` and `apt show nvidia-jetpack`

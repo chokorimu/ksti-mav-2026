@@ -4,3 +4,11 @@ actuator: { type: sim }
 model: { path: models/prototype/ }
 debug: { enabled: true }
 network: { enabled: true }
+
+# Closed-loop synthetic run: scripts/run.sh sim [scenario] [--steps N] [--overlay out.mp4]
+sim:
+  scenario: straight
+  dt: 0.05
+  max_steps: 1200
+  seed: 0
+  overlay: null
