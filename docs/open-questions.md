@@ -14,7 +14,8 @@ Still needed for the Arduino firmware and the power design:
 - Battery type/voltage, and the 5 V rail for motors/servo (BEC/UBEC, never the Arduino 5 V pin).
 - Emergency stop circuit: what does it cut? Recommendation: cut the motor power rail in
   hardware (relay/MOSFET), independent of any software.
-Blocks: the Arduino firmware (the host-side SerialActuator can be written now).
+Blocks: the Arduino firmware in `firmware/arduino/` (the host-side SerialActuator can be
+written now).
 
 ## Q2 — Camera model and interface [ANSWERED 7 Nov 2026]
 CSI, Raspberry Pi camera module. Exact module (v1/v2/v3/GS) to verify on the device.

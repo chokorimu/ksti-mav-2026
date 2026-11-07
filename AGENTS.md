@@ -61,6 +61,8 @@ AGENTS.md
 docs/        ksti-mav-rules.md, research-plan.md, hardware.md
 configs/     sim.yaml, prototype.yaml, final.yaml
 src/         perception/, planning/, control/, io/ (camera, actuator: sim & real), sim/
+firmware/    arduino/ (MCU firmware: protocol.md, shared core/ + prototype.ino +
+              final.ino via PlatformIO; blocked on Q1)
 models/      prototype/, final/
 scripts/     setup_dev.sh, setup_jetson.sh, run.sh
 tests/
@@ -69,7 +71,7 @@ tests/
 ## Implemented so far (no real hardware drivers yet)
 - `src/mav/types.py`: `Command(speed m/s, curvature 1/m)`, `VehicleParams`, `load_vehicle_params()` (refuses to run while `configs/vehicle.yaml` has unmeasured `null` values).
 - `src/mav/io/camera.py`: `Camera` protocol, `csi_pipeline()` (GStreamer, headless), `open_csi/open_usb/open_video`, `CallbackCamera` for the simulator.
-- `src/mav/io/actuator.py`: `SafeActuator` (stopped by default, speed clamp, command timeout), `NullActuator`, `CallbackActuator` for the simulator.
+- `src/mav/io/actuator.py`: `SafeActuator` (stopped by default, speed clamp, command timeout), `NullActuator`, `CallbackActuator` for the simulator, and `SerialActuator` (mapper output -> ASCII lines over USB serial per `firmware/arduino/protocol.md`; the port is injected, so tests use a fake port and pyserial stays an optional, lazily-imported dependency).
 - `src/mav/io/buttons.py`: `Event` and `ScriptedButtons`. **Real GPIO buttons are not written**: pins and wiring are unknown.
 - `src/mav/control/mapping.py`: `DifferentialMapper` (prototype) and `AckermannMapper` (final).
 - `src/mav/control/state_machine.py`: BOOT/WAIT_START/RUN/STOPPED; resume after emergency keeps the checkpoint count.
@@ -92,9 +94,11 @@ tests/
     and `app.py` are untouched by it. Only the `sim` profile starts a server (`--dashboard`
     or `dashboard.enabled` in `configs/sim.yaml`); `final` has no such section and stays
     serverless. Tests: `tests/test_dashboard.py`, `tests/test_dashboard_server.py`.
-- **Not written yet:** real motor/servo drivers, GPIO buttons, checkpoint detection, and the
-    dashboard browser frontend (3D arena, camera overlay, controls UI — backend is done).
-    Do not invent them; ask for the hardware facts in `docs/hardware.md` first.
+- **Not written yet:** the Arduino firmware itself (`firmware/arduino/`: `core/`,
+    `prototype/prototype.ino`, `final/final.ino`, `platformio.ini` — blocked on Q1),
+    GPIO buttons, checkpoint detection, and the dashboard's browser visual check
+    (frontend built in `8875d48`). Do not invent them; ask for the hardware facts in
+    `docs/hardware.md` first.
 
 ## Long-running work protocol (anti-drift)
 

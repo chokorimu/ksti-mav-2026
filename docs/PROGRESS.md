@@ -88,11 +88,12 @@ check. Next: the real-recordings task below.
    Done when: offsets/curvatures on recordings look sane and the constants are measured.
 3. Measure per-frame latency on the Jetson (`tegrastats` + the runner's latency printout).
    Blocked by task 1. Done when: mean/p95 ms per frame recorded in this file.
-4. `SerialActuator` (host side): send mapped wheel/steering commands to the Arduino over
-   USB serial, wrapped in the existing `SafeActuator` (stopped default, clamp, timeout).
-   Needs only the protocol decision + a serial port config (no hardcoded port names).
-   The Arduino firmware waits for the driver model (Q1). Done when: unit tests with a
-   fake serial port pass.
+4. ~~`SerialActuator` (host side)~~ DONE 7 Nov 2026, commit `c75c7d0`: protocol v1 in
+   `firmware/arduino/protocol.md` (ASCII lines `W`/`D`/`S`, 500 ms watchdog, boot-stopped),
+   `SerialActuator` in `src/mav/io/actuator.py` (port injected, verb chosen by the mapper,
+   pyserial imported lazily), `tests/test_serial_actuator.py` (11 tests, fake port).
+   Still open: the Arduino firmware itself (`core/`, `prototype.ino`, `final.ino`,
+   `platformio.ini`) — blocked on Q1 — and the m/s->PWM calibration, wheels-lifted.
 5. Checkpoint / start-finish line detection. Not started. Split into subtasks before coding.
 6. ~~Web-simulator bridge~~ replaced by the web dashboard for the synthetic sim (current
    task above). The external web simulator is no longer needed; Q5 closed.

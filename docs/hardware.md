@@ -15,6 +15,7 @@ Only facts confirmed by the user are in "Confirmed". Everything else is a questi
 - Motor/servo control path: **Arduino over USB serial** (user decision, 7 Nov 2026).
   Jetson stays the CV brain; the Arduino drives the motor driver and servo. The Jetson
   40-pin header is NOT used for actuators (3.3 V logic, mA-level current, not real-time).
+  The Arduino firmware goes in `firmware/arduino/` (not written yet, blocked on Q1).
 - `scripts/setup_jetson.sh` runs on the Jetson (PyYAML 5.4.1 comes from the system packages).
 
 ## Verified on the Jetson (from the user's command output)
