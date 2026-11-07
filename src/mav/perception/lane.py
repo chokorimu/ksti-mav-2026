@@ -12,8 +12,14 @@ Pipeline per frame:
   4. split the ROI into horizontal bands; the marking-pixel centroid of each band
      approximates the lane centre there (the two edge lines are symmetric around it,
      and the dashed centre line reinforces it). A band whose marking is smeared
-     across the image is dropped: see `max_band_span_m`.
-  5. weighted quadratic fit x = a*y^2 + b*y + c over the band centroids
+     across the image is dropped: see `max_band_span_m`. Where a band's marked
+     columns split into separate clusters (gap > `cluster_gap_m`), the reported
+     centre is the midpoint of the OUTERMOST clusters: the lane centre even when
+     one edge line is thicker than the other. A single-cluster band is one edge
+     line on its own and cannot locate the centre, so the fit prefers bands with
+     two or more clusters and falls back to all bands only when too few survive.
+  5. weighted quadratic fit x = a*y^2 + b*y + c over the band centroids, with
+     iterative outlier rejection (`_robust_fit`)
   6. report offset at a lookahead row, curvature, and a confidence score
 
 Known limitations (v1, deliberate):
@@ -28,11 +34,22 @@ Known limitations (v1, deliberate):
     fits it. Measured there: at `roi_top` 0.45 (a 1.52 m window) the fit residual
     is 25-46 px and confidence sits at 0.31-0.40, right on `min_confidence`; at
     0.65 the residual is 3-11 px and confidence 0.37-0.91.
-  - Centroid-based: if only one edge line is visible the centre estimate sits
-    between that edge and the dashed centre line. Broad shadows can enter the
-    dark mask and pull the centroid; RQ1 (lighting robustness) is still open.
-  - Checkpoints / start-finish lines are NOT detected here (later task). They do
-    not break centring: they cross the lane symmetrically.
+  - When only ONE edge line is visible the centre cannot be measured: those
+    single-cluster bands are excluded from the fit when better bands exist, and
+    the all-single-cluster fallback is penalised (confidence halved), so the
+    policy stops instead of steering half a lane width off. Measured on a phone
+    recording of a practice track: without the cluster rule the offset saturates
+    at +-2.5-3 m whenever one edge dominates the ROI.
+  - `min_contrast` exists because of that same recording: a messaging-app codec
+    puts +-10-20 gray levels of noise on a smooth floor, the robust sigma then
+    bottoms out at its 1.0 floor, and a k*sigma-only threshold masks the noise
+    instead of the markings (0% detection measured). The absolute floor keeps
+    the mask on real contrast; clean sensor noise never reaches it. Broad
+    shadows can still enter the dark mask and pull a centroid; RQ1 (lighting
+    robustness) is still open.
+  - Checkpoints / start-finish lines are NOT detected here (see
+    `mav.perception.checkpoint`). They do not break centring: they cross the
+    lane symmetrically.
 """
 from __future__ import annotations
 
@@ -58,6 +75,8 @@ class LaneConfig:
     bottom_row_m: float = 0.3       # UNCALIBRATED: forward distance of the frame's bottom row
     lookahead_frac: float = 0.5     # offset is evaluated this far down the ROI
     min_confidence: float = 0.3
+    min_contrast: float = 20.0       # absolute gray-level floor under the marking threshold
+    cluster_gap_m: float = 0.15      # column gap that splits one band into separate markings
     max_band_span_m: float = 0.8    # if a band's marking spans more than this, it is dropped
     mask_frac_band: tuple[float, float] = (0.01, 0.25)  # sane marking coverage (auto mode)
 
@@ -125,6 +144,7 @@ def _band_points(
     min_px: int,
     max_span_px: float | None = None,
     dropped: dict[str, int] | None = None,
+    max_gap_px: float | None = None,
 ) -> list[tuple[float, float, float]]:
     """(row, column, pixel-count) of the marking centroid per horizontal band.
 
@@ -139,30 +159,119 @@ def _band_points(
     `dropped`, if given, is filled with why bands were left out: `thin` (too
     few marking pixels) and `smeared` (span over the limit). The two are
     different failures and the dashboard shows them separately.
+
+    `max_gap_px`, if given, splits each band's marked columns into clusters
+    separated by wider gaps; a band with two or more clusters then reports the
+    midpoint of the outermost clusters instead of the plain centroid. See
+    `_band_points_with_clusters`, which also returns the cluster count.
+    """
+    return [
+        (y, x, n)
+        for y, x, n, _ in _band_points_with_clusters(
+            mask, n_bands, min_px, max_span_px, dropped, max_gap_px
+        )
+    ]
+
+
+def _band_points_with_clusters(
+    mask: np.ndarray,
+    n_bands: int,
+    min_px: int,
+    max_span_px: float | None = None,
+    dropped: dict[str, int] | None = None,
+    max_gap_px: float | None = None,
+) -> list[tuple[float, float, float, int]]:
+    """`_band_points` plus a cluster count: (row, column, pixels, n_clusters).
+
+    A band whose marked columns split into two or more clusters shows separate
+    markings - the two edge lines, with or without the dashes between them -
+    and the midpoint of the outermost clusters is the lane centre there, no
+    matter how unevenly thick the individual markings are. A single cluster is
+    one edge line on its own: its centroid sits ON that line, up to half a lane
+    width off centre (measured on a phone recording: offsets saturating at
+    +-2.5-3 m), so `_fit_debug` trusts such a band only when nothing better
+    exists.
     """
     h, w = mask.shape
     edges = np.linspace(0, h, n_bands + 1).astype(int)
     xs = np.arange(w, dtype=np.float64)
-    pts: list[tuple[float, float, float]] = []
-    n_thin = n_smeared = 0
+    clustered = max_gap_px is not None
+
+    # Pass 1: per-band significant clusters. A cluster must carry real marking
+    # mass: stray single pixels (sensor or codec noise) form their own
+    # clusters, and as the OUTERMOST ones they would drag the midpoint off the
+    # lane - on the sim's clean floor a 1-px cluster at column 145 moved a band
+    # centre from 320 to 248. 5% of the band's marking pixels keeps every real
+    # line (a thin edge next to a thick one is ~10% of the band) and drops the
+    # noise.
+    bands: list[tuple[int, np.ndarray, float, list[tuple[float, float, float]]]] = []
+    n_thin = 0
     for i in range(n_bands):
         colsum = mask[edges[i]:edges[i + 1]].sum(axis=0)
         total = float(colsum.sum())
         if total < min_px:
             n_thin += 1
             continue
-        if max_span_px is not None:
+        sig: list[tuple[float, float, float]] = []
+        if clustered:
             cols = np.nonzero(colsum)[0]
             if cols.size:
+                splits = np.where(np.diff(cols) > max_gap_px)[0]
+                groups = [g for g in np.split(cols, splits + 1) if g.size]
+                min_cluster_px = max(2.0, 0.05 * total)
+                sig = [
+                    (float(g[0]), float(g[-1]), float(colsum[g].sum()))
+                    for g in groups
+                    if float(colsum[g].sum()) >= min_cluster_px
+                ]
+        bands.append((i, colsum, total, sig))
+
+    # The lane width as measured in THIS frame: the median outer width of the
+    # bands that show two or more clusters. That is scale-invariant, so the
+    # smear decision no longer depends on a calibrated px_per_m - a phone
+    # camera at ~840 px/m and the robot at 130 px/m get the same answer. The
+    # old fixed `max_span_px` gate (0.8 m at the fallback 130 px/m = 104 px)
+    # threw away 8 of 12 good bands on the phone recording, whose lane is
+    # ~420 px wide, and cut detection from 88% to 15%.
+    multi_widths = [b[3][-1][1] - b[3][0][0] for b in bands if len(b[3]) >= 2]
+    if multi_widths:
+        lane_width_px: float | None = float(np.median(multi_widths))
+    else:
+        lane_width_px = max_span_px
+
+    pts: list[tuple[float, float, float, int]] = []
+    n_smeared = 0
+    for i, colsum, total, sig in bands:
+        if clustered:
+            width = (sig[-1][1] - sig[0][0]) if sig else 0.0
+            if lane_width_px is not None and width > 1.5 * lane_width_px:
+                n_smeared += 1
+                continue
+            if len(sig) >= 2:
+                n_clusters = len(sig)
+                # Midpoint of the OUTER boundaries, not of the cluster
+                # centres. Where a dash merges with an edge line into one
+                # wide cluster, that cluster's centre is pulled off the line
+                # (measured on the sim: column 276 for a line at 253, a 23 px
+                # error), while its outer column is still the lane edge.
+                x = 0.5 * (sig[0][0] + sig[-1][1])
+            else:
+                n_clusters = 1
+                x = float((xs * colsum).sum() / total)
+        else:
+            # No cluster split requested: the legacy fixed span gate.
+            cols = np.nonzero(colsum)[0]
+            if max_span_px is not None and cols.size:
                 cum = np.cumsum(colsum[cols])
                 lo = int(np.searchsorted(cum, 0.05 * total, side="left"))
                 hi = min(int(np.searchsorted(cum, 0.95 * total, side="left")), cols.size - 1)
                 if float(cols[hi] - cols[lo]) > max_span_px:
                     n_smeared += 1
                     continue
-        x = float((xs * colsum).sum() / total)
+            n_clusters = 1
+            x = float((xs * colsum).sum() / total)
         y = 0.5 * (edges[i] + edges[i + 1])
-        pts.append((y, x, total))
+        pts.append((y, x, total, n_clusters))
     if dropped is not None:
         dropped["thin"] = n_thin
         dropped["smeared"] = n_smeared
@@ -179,6 +288,34 @@ def _fit_quadratic(pts: list[tuple[float, float, float]]) -> tuple[float, float,
     coef, *_ = np.linalg.lstsq(A * sw[:, None], xs * sw, rcond=None)
     a, b, c = (float(v) for v in coef)
     resid = float(np.sqrt((sw * sw * (xs - A @ coef) ** 2).sum() / sw.sum()))
+    return a, b, c, resid
+
+
+def _robust_fit(
+    pts: list[tuple[float, float, float]], min_points: int, iters: int = 3
+) -> tuple[float, float, float, float]:
+    """Weighted quadratic fit with iterative outlier rejection.
+
+    A plain least-squares fit bends towards an outlying band instead of
+    rejecting it: the polynomial spends its freedom accommodating the outlier
+    and the good bands pay for it. Measured on a phone recording, one near-field
+    edge line moved the lookahead offset by +1.5 m while its own residual stayed
+    under 15 px - no per-point residual test can catch that, only a consensus
+    can. Bands whose residual exceeds max(median + 3*MAD, 12 px) are dropped and
+    the fit repeated; the loop stops when nothing changes or `min_points` bands
+    are left, so a detector can never reject its way below a fit.
+    """
+    a = b = c = resid = 0.0
+    for _ in range(iters):
+        a, b, c, resid = _fit_quadratic(pts)
+        rp = [abs(x - (a * y * y + b * y + c)) for y, x, _ in pts]
+        med = float(np.median(rp))
+        mad = 1.4826 * float(np.median(np.abs(np.array(rp) - med)))
+        cut = max(med + 3.0 * mad, 12.0)
+        keep = [p for p, v in zip(pts, rp) if v <= cut]
+        if len(keep) == len(pts) or len(keep) < min_points:
+            break
+        pts = keep
     return a, b, c, resid
 
 
@@ -214,13 +351,20 @@ class LaneDetector:
 
         resid = roi - _background(roi, cfg.bg_ksize)
         sigma = _noise_sigma(roi)
+        # k*sigma alone is not enough on coded footage: a messaging-app codec
+        # leaves +-10-20 gray levels on a smooth floor, the robust sigma then
+        # bottoms out at its 1.0 floor, and the mask fills with codec noise
+        # (0% detection measured on a phone recording). The absolute floor
+        # keeps the threshold on real contrast; clean sensor noise never
+        # reaches it, so the sim and the Jetson camera are unaffected.
+        thresh = max(cfg.thresh_k * sigma, cfg.min_contrast)
         masks = {
-            "light": resid > cfg.thresh_k * sigma,
-            "dark": resid < -cfg.thresh_k * sigma,
+            "light": resid > thresh,
+            "dark": resid < -thresh,
         }
         debug.update(
             sigma=sigma,
-            threshold=cfg.thresh_k * sigma,
+            threshold=thresh,
             light_frac=float(masks["light"].mean()),
             dark_frac=float(masks["dark"].mean()),
         )
@@ -234,6 +378,13 @@ class LaneDetector:
             elif not (cfg.mask_frac_band[0] <= mask.mean() <= cfg.mask_frac_band[1]):
                 continue  # implausible marking coverage for this polarity
             meas, mdbg = self._fit_debug(mask, name, y0, h, w)
+            # Keep the debug of the strongest attempt even when it produced no
+            # measurement: otherwise a failed fit reports "no candidate mask"
+            # and hides why it failed (the dashboard then shows nothing).
+            if best_debug.get("polarity") is None or (
+                meas is not None and (best is None or meas.confidence > best.confidence)
+            ):
+                best_debug = mdbg
             if meas is not None and (best is None or meas.confidence > best.confidence):
                 best, best_debug = meas, mdbg
 
@@ -252,19 +403,37 @@ class LaneDetector:
         """Fit one polarity mask. Returns (measurement or None, debug dict)."""
         cfg = self.cfg
         max_span_px = None if cfg.max_band_span_m is None else cfg.max_band_span_m * cfg.px_per_m
+        gap_px = None if cfg.cluster_gap_m is None else cfg.cluster_gap_m * cfg.px_per_m
         dropped: dict[str, int] = {}
-        pts = _band_points(mask, cfg.n_bands, cfg.min_band_pixels, max_span_px, dropped)
+        pts4 = _band_points_with_clusters(
+            mask, cfg.n_bands, cfg.min_band_pixels, max_span_px, dropped, gap_px
+        )
         debug: dict = {
             "polarity": polarity,
             "mask_pixels": int(mask.sum()),
-            "n_bands_with_pixels": len(pts),
+            "n_bands_with_pixels": len(pts4),
             "n_bands_dropped_smeared": dropped.get("smeared", 0),
             "n_bands_dropped_thin": dropped.get("thin", 0),
-            "band_points": [[p[0], p[1], p[2]] for p in pts],
+            "band_points": [[p[0], p[1], p[2]] for p in pts4],
         }
-        if len(pts) < cfg.min_points:
+        if len(pts4) < cfg.min_points:
             return None, debug
-        a, b, c, resid = _fit_quadratic(pts)
+
+        # Prefer bands that show two or more clusters: those have both edge
+        # lines in view, so their midpoint is the lane centre. A single-cluster
+        # band is one edge line alone - its centroid sits ON that line, up to
+        # half a lane width off centre (measured: offsets saturating at
+        # +-2.5-3 m on a phone recording). Only when too few multi-cluster
+        # bands survive do we fall back to all bands, and that fallback is
+        # penalised below so the policy stops rather than steering blind.
+        multi = [p for p in pts4 if p[3] >= 2]
+        pts = [(y, x, n) for y, x, n, _ in (multi if len(multi) >= cfg.min_points else pts4)]
+        fallback = len(multi) < cfg.min_points
+        debug.update(
+            n_multi_cluster_bands=len(multi),
+            used_single_cluster_fallback=fallback,
+        )
+        a, b, c, resid = _robust_fit(pts, cfg.min_points)
 
         # The fit works in ROI-relative rows; convert the lookahead row to match.
         y_look_roi = lookahead_row(cfg, h) - y0
@@ -288,6 +457,12 @@ class LaneDetector:
         f_mask = min(1.0, total_px / (cfg.min_band_pixels * cfg.n_bands * 0.5))
         c_struct = min(1.0, max(0.0, (_structure_score(mask) - 0.35) / 0.45))
         confidence = f_pts * (0.4 + 0.6 * f_res) * f_mask * (0.15 + 0.85 * c_struct)
+        if fallback:
+            # No band showed both edge lines: the centre is a guess. Halve the
+            # confidence so `min_confidence` rejects it unless the rest of the
+            # evidence is strong, and the policy stops instead of steering at
+            # half a lane width off.
+            confidence *= 0.5
 
         return (
             LaneMeasurement(
