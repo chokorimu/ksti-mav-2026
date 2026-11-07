@@ -25,7 +25,7 @@ Technical Meeting: 8 Nov 2026. Competition: 12 Nov 2026. Priority is a robot tha
 - On the Jetson: Python 3.10.12, OpenCV 4.8.0 (GStreamer yes, no CUDA line), CUDA 12.6, cuDNN 9.3, TensorRT 10.3 runtime. Power mode `MAXN_SUPER`.
 - `scripts/setup_jetson.sh` ran successfully.
 - The full `nvidia-jetpack` package is NOT installed (connection problems). TensorRT dev tools and Python bindings are unconfirmed. Not needed for classical CV.
-- 99 unit tests passed on the development laptop (Python 3.14.8, numpy 2.5.4, OpenCV 5.0.0). **They have not been run on the Jetson (Python 3.10).** Run `pytest` there first and report failures.
+- 126 unit tests passed on the development laptop (Python 3.14.8, numpy 2.5.4, OpenCV 5.0.0). **They have not been run on the Jetson (Python 3.10).** Run `pytest` there first and report failures.
 
 ## Code that exists (see `AGENTS.md` for the module list)
 Command type, camera/actuator/button interfaces, SafeActuator, differential and Ackermann mappers, state machine, `step()`.
@@ -40,6 +40,13 @@ Closed-loop synthetic simulator (`src/mav/sim/`): world + renderer + scenarios +
 - `scripts/run.sh sim` dispatches to it (defaults from `configs/sim.yaml` section `sim:`).
 - Results (laptop): straight and offset finish the 12 m with 100% detection and mean |offset| 0.004/0.023 m; curve and s_curve keep 100% detection inside the 0.6 m corridor with mean |offset| 0.14/0.18 m (pure-pursuit lag, no feedforward yet). 9 tests in `tests/test_sim.py`.
 - Bug the closed loop exposed (fixed): a path wrapping >180° re-entered the camera's forward window and corrupted the interpolation. `centre_x_fn` now follows the branch the vehicle is driving on, selected by arc length.
+
+## Measured KSTI track in the sim, and what the policy does on it (T1-T2, 7 Nov 2026)
+- `src/mav/sim/data/track_ksti.json` + `src/mav/sim/track.py`: the official track measured off the committee's own map — 1440 centreline samples, 19.39 m loop, 0.4993–0.5027 m wide, tightest centreline radius 0.46 m at s=12.59 m (median 1.97 m). The scale is anchored to the guidebook's 50 cm lane width; nothing is estimated. A rigid transform puts the start at the origin heading +Y, so curvature survives it (`measured_radius_min()` re-derives the tightest radius from the points alone as a check). 16 tests in `tests/test_track.py`.
+- **7.83 m (39.3%) of the lap is tighter than the policy's 1.5 m steering clamp.** The synthetic scenarios only went to R=2 m, so nothing had tested the policy against the geometry it will actually meet.
+- T2 result (`run_sim("ksti", max_steps=1200)`, 60 s sim time, seeds 0/1/2 identical to within noise): **1.26 m of 19.39 m covered (6.5%)**, mean speed 0.021 m/s, 1147/1200 ticks below 0.1 m/s, detection rate 9%, 0 departures, steering clamp saturated on 0% of ticks.
+- The robot is NOT stopped by the steering clamp. It dies of low speed at s≈1.26 m, ~11 m before the tight corner. Root cause: the detector's single quadratic cannot fit a track whose curvature changes inside the 2.2 m window (`resid` = 42 px saturates `f_res`, so confidence is capped at ~0.31, right on `min_confidence` = 0.3); the policy's speed law multiplies by confidence, so a detector artefact becomes 0.047 m/s, and then STOP. Stopped = frozen pose = frozen frame = permanent deadlock.
+- Candidate fixes (not decided, waiting on the user): piecewise / near-rows-only fit in the detector; `on_lost="hold"` or a slow creep instead of `"stop"`; stop letting a detector artefact set the speed.
 
 ## Web dashboard for the synthetic sim (subtasks 1-2 done on the laptop, 7 Nov 2026)
 Pure viewer + control channel. `lane.py`, `lane_policy.py` and `app.py` are untouched; the CV and control code stays identical to the real robot. Only the `sim` profile can start it — `final` has no `dashboard:` section and stays serverless.

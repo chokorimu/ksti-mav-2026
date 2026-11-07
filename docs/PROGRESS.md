@@ -27,6 +27,58 @@ Time pressure: Technical Meeting 8 Nov 2026, Competition 12 Nov 2026.
       read -0.32 m instead of -0.007 m) and collapsing detector confidence.
       `centre_x_fn` now selects the branch the vehicle is driving on by ARC length from
       the nearest polyline point; the `curve` scenario is a 90° turn, not a 286° loop.
+- [x] Measured KSTI track as a simulator scenario (T1): `src/mav/sim/data/track_ksti.json`
+      (1440 centreline samples in metres, scale anchored to the guidebook's 50 cm lane
+      width — measured off the committee's own map, nothing estimated) +
+      `src/mav/sim/track.py` (rigid transform so the vehicle starts at the origin heading
+      +Y, `track_stats()`, `measured_radius_min()` as an independent curvature check),
+      `LanePath.from_points()`, `Scenario.points`, and the track name accepted by
+      `parse_control()` / `/scenarios`. Check: `pytest tests/test_track.py` — 16 passed
+      (laptop); `run.sh sim --list` shows ksti; a live dashboard serves it in `/scenarios`
+      and accepts it in `POST /control`. DONE 7 Nov 2026, commits `001cf30` + `8df1883`.
+
+## T2 result: the current policy on the measured track (7 Nov 2026, laptop)
+
+`run_sim("ksti", max_steps=1200)` = 60 s sim time. Seeds 0/1/2 agree to within noise:
+
+| metric | value |
+|---|---|
+| lap covered | **1.26 m of 19.39 m (6.5%)** |
+| mean speed | 0.021 m/s |
+| ticks below 0.1 m/s | 1147 / 1200 |
+| detection rate | 9% (109/1200 frames) |
+| departures (>0.25 m) | 0 |
+| steering clamp saturated | **0% of ticks** |
+
+Failure chain, traced tick by tick (the robot dies at s≈1.26 m, ~11 m before the
+0.46 m corner at s=12.59 m):
+
+1. The track is tight from the start: median R = 1.33 m in the first metre, 0.47 m at
+   s=2–3 m. There is no straight to accelerate on.
+2. The detector finds the lane on every frame (12 band points), but a SINGLE quadratic
+   cannot fit a track whose curvature changes inside the 2.2 m window: `resid` = 42 px,
+   and `f_res = 1 - min(1, resid/25)` saturates to 0 at 25 px, so confidence is capped
+   at ~0.31 (vs 0.90 on the synthetic scenarios, where curvature is constant).
+3. `severity = max(|κ|, |measured curvature|)` = 1.71 > `curv_slow` = 1.0, so speed
+   drops to `v_min` = 0.15 m/s, then `*= confidence` → 0.047 m/s.
+4. Confidence fluctuates 0.30–0.32, right on `min_confidence` = 0.3. When it dips below,
+   `meas is None` → STOP.
+5. Deadlock: stopped = frozen pose = frozen frame = no recovery. The robot never moves again.
+
+Track geometry (measured, not simulated): loop 19.39 m, width 0.4993–0.5027 m, tightest
+radius 0.46 m at s=12.59 m, median 1.97 m, and **7.83 m (39.3%) of the lap is tighter
+than the policy's 1.5 m steering clamp**.
+
+The important nuance: the 1.5 m steering clamp is NOT the binding constraint (0%
+saturation). The robot dies of low speed long before it reaches a corner tight enough
+to need the clamp. Fixing the steering clamp alone would change nothing.
+
+Candidate fixes (NOT decided — waiting on the user):
+- Detector: piecewise fit, or fit only the near rows (where one quadratic is valid).
+- Policy: `on_lost="hold"` or a slow creep instead of `"stop"`, so a lost frame is not
+  a permanent stop.
+- Policy: the speed law multiplying by confidence turns a detector problem into a
+  motion problem — a detector artefact should not be able to stop the robot.
 
 ## Current task: web dashboard for the sim (user request, 7 Nov 2026)
 
@@ -80,22 +132,29 @@ check. Next: the real-recordings task below.
 
 ## Next tasks (in order)
 
-1. Record real video on the Jetson. Variety: straight, curves, white + black markings,
+1. **T2 follow-up — BLOCKED on a user decision (asked 7 Nov 2026).** The policy cannot
+   drive the measured track: it covers 6.5% of a lap and then deadlocks (see the T2
+   result above). Two coupled decisions are needed before any code changes:
+   (a) Stanley vs pure pursuit for the steering law, and (b) whether to fix the
+   detector's single-quadratic model first (piecewise / near-rows-only fit), since the
+   policy's confidence term is what actually stops the robot. Do not start this until
+   the user answers; do not change `lane_policy.py` or `lane.py` unilaterally.
+2. Record real video on the Jetson. Variety: straight, curves, white + black markings,
    dim + bright light, dashed centre line, a checkpoint, start/finish. Done when: the
    clips exist and play back.
-2. Run the detector offline on the recordings; recalibrate `px_per_m` and `bottom_row_m`
-   (currently uncalibrated guesses: 130.0 / 0.3). Blocked by task 1.
+3. Run the detector offline on the recordings; recalibrate `px_per_m` and `bottom_row_m`
+   (currently uncalibrated guesses: 130.0 / 0.3). Blocked by task 2.
    Done when: offsets/curvatures on recordings look sane and the constants are measured.
-3. Measure per-frame latency on the Jetson (`tegrastats` + the runner's latency printout).
-   Blocked by task 1. Done when: mean/p95 ms per frame recorded in this file.
-4. ~~`SerialActuator` (host side)~~ DONE 7 Nov 2026, commit `c75c7d0`: protocol v1 in
+4. Measure per-frame latency on the Jetson (`tegrastats` + the runner's latency printout).
+   Blocked by task 2. Done when: mean/p95 ms per frame recorded in this file.
+5. ~~`SerialActuator` (host side)~~ DONE 7 Nov 2026, commit `c75c7d0`: protocol v1 in
    `firmware/arduino/protocol.md` (ASCII lines `W`/`D`/`S`, 500 ms watchdog, boot-stopped),
    `SerialActuator` in `src/mav/io/actuator.py` (port injected, verb chosen by the mapper,
    pyserial imported lazily), `tests/test_serial_actuator.py` (11 tests, fake port).
    Still open: the Arduino firmware itself (`core/`, `prototype.ino`, `final.ino`,
    `platformio.ini`) — blocked on Q1 — and the m/s->PWM calibration, wheels-lifted.
-5. Checkpoint / start-finish line detection. Not started. Split into subtasks before coding.
-6. ~~Web-simulator bridge~~ replaced by the web dashboard for the synthetic sim (current
+6. Checkpoint / start-finish line detection. Not started. Split into subtasks before coding.
+7. ~~Web-simulator bridge~~ replaced by the web dashboard for the synthetic sim (current
    task above). The external web simulator is no longer needed; Q5 closed.
 
 ## Blocked on hardware facts (details in docs/open-questions.md)
@@ -113,6 +172,11 @@ check. Next: the real-recordings task below.
 - Centroid-based: with only one edge line visible the centre estimate is pulled toward it.
 - Checkpoints / start-finish lines are not detected (they do cross the lane symmetrically,
   so centring survives, but this is untested).
+- **Measured on the real track (T2, 7 Nov 2026):** the single-quadratic model assumes
+  constant curvature across the whole 2.2 m window. The measured track changes curvature
+  inside that window, so `resid` = 42 px and the `f_res = 1 - min(1, resid/25)` term
+  saturates, capping confidence at ~0.31 — right on `min_confidence`. This is the root
+  cause of the T2 failure, not the steering clamp.
 
 ## Environment notes
 
