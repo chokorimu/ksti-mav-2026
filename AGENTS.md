@@ -1,62 +1,71 @@
-# AGENTS.md – Mobil otonom 1:10 untuk KSTI 2026 (Mini Autonomous Vehicle)
+# AGENTS.md – 1:10 Autonomous Vehicle for KSTI 2026 (Mini Autonomous Vehicle)
 
-Bahasa kerja: Indonesia. Istilah teknis boleh tetap Inggris.
+Working language: English. Keep Indonesian names of official documents as they appear; inline comments in `configs/` and requirements files are Indonesian — leave them as-is.
 
-## Dokumen rujukan (baca sebelum bekerja pada topik terkait)
-- Aturan lomba lengkap, rumus skor, penalti, ambiguitas: @docs/ksti-mav-rules.md
-- Rencana riset, arsitektur, panduan elektrikal minimal: @docs/research-plan.md
+## Read first
+- Competition rules, scoring, penalties, ambiguities: `docs/ksti-mav-rules.md` (transcription of the guidebook PDF — the organizer's word overrides it).
+- Research plan, architecture, electrical guide, open items: `docs/research-plan.md`.
+- If a task touches an item marked **[A#]** in the rules, do not guess. Ask the user.
+- This is the only instruction file in the repo (no README, CI, or other agent config to satisfy).
 
-Jika tugas menyentuh poin bertanda **[A#]** di rules, jangan menebak. Tanya pengguna.
+## Environment
+- **Jetson Orin Nano: SSH only, no display.** No `cv2.imshow` or GUI code; inspect via saved frames/video or an MJPEG stream (dev mode only).
+- **JetPack version unknown.** Before any version-dependent install, ask the user to run `cat /etc/nv_tegra_release` and `apt show nvidia-jetpack` on the Jetson and record it in `docs/hardware.md` (does not exist yet — create it).
+- Power mode: check with `sudo nvpmodel -q`; use the same mode for testing and competition; measure with `tegrastats`.
+- Linux preferred, Windows via WSL2 fallback. Write commands for bash; use `pathlib`; never hardcode paths or serial port names. `.gitattributes` enforces LF.
+- Two architectures: x86_64 laptop vs aarch64 Jetson. Dependencies are split (`requirements-dev.txt` vs `requirements-jetson.txt`); never pip-install x86 wheels on the Jetson.
+- The web simulator uses real computer vision. Only the camera and actuator layers differ between sim and robot; all perception/planning/control/state-machine code is shared. Planned interfaces: `Camera.read() -> frame` and `Actuator.set(steer, throttle)`.
 
-## Lingkungan
-- **Jetson Orin Nano: hanya lewat SSH, tanpa display.** Jangan pakai `cv2.imshow`, GUI, atau alat yang butuh layar. Untuk melihat hasil, simpan gambar/video atau gunakan stream MJPEG khusus mode dev.
-- **Versi JetPack belum diketahui.** Jangan menebak versi PyTorch/TensorRT/OpenCV atau perintah instalasi. Minta pengguna menjalankan `cat /etc/nv_tegra_release` dan `apt show nvidia-jetpack` di Jetson, lalu catat hasilnya di `docs/hardware.md` sebelum memberi instruksi yang bergantung pada versi.
-- Mode daya Orin Nano dicek dengan `sudo nvpmodel -q`. Pakai mode yang sama saat tes dan lomba, dan ukur performa dengan `tegrastats`.
-- **Dev: Linux diutamakan**, Windows didukung sebagai cadangan (idealnya lewat WSL2). Tulis perintah untuk bash. Gunakan `pathlib`, jangan hardcode path atau nama port serial.
-- Arsitektur CPU berbeda (laptop x86_64 vs Jetson aarch64). Dependensi dipisah per platform; jangan asumsikan wheel pip yang sama.
-- Ada **simulasi berbasis web** yang memakai computer vision asli. Kode CV dan kontrol harus identik antara sim dan robot nyata; hanya lapisan kamera dan aktuator yang berbeda.
+## Execution profiles (select via `MAV_PROFILE`, never code branches)
 
-## Profil eksekusi
-Pilih lewat konfigurasi, bukan dengan mengedit kode.
-
-| Profil | Tempat | Model | Tujuan |
+| Profile | Where | Model | Purpose |
 |---|---|---|---|
-| `sim` | laptop + sim web | model prototype | uji algoritma tanpa hardware |
-| `prototype` | Jetson/laptop | model prototype (debug, overlay, logging penuh) | iterasi dan pengukuran |
-| `deploy` | Jetson | model teroptimasi (mis. TensorRT), tanpa debug | mode lomba |
+| `sim` | laptop + web sim | prototype model | test algorithms without hardware |
+| `prototype` | Jetson/laptop | prototype model (debug, overlay, full logging) | iteration and measurement |
+| `deploy` | Jetson | optimized model (e.g. TensorRT), no debug | competition mode |
 
-Aturan `deploy`: tidak ada server jaringan, stream, atau ketergantungan SSH saat robot berjalan; mulai otomatis saat boot lalu menunggu tombol start fisik.
+- `deploy` rules: no network server, streaming, or SSH dependency while the robot runs. Starts automatically at boot and waits for the physical start button.
+- `prototype.yaml` and `deploy.yaml` have `camera.source` / `actuator.type` = `null` — fill in after hardware is confirmed, do not guess.
 
-## Batasan keras dari lomba (jangan dilanggar oleh desain apa pun)
-- Dilarang sensor infrared dan line follower. Jangan menambah sensor selain kamera tanpa konfirmasi panitia **[A5]**.
-- Dilarang komunikasi apa pun untuk mengendalikan robot selama percobaan (nirkabel maupun kabel).
-- Dilarang roda omni/mecanum. Wajib ada tombol fisik emergency stop dan tombol start.
-- Warna marka (putih/hitam) mengikuti lantai; warna checkpoint dan start/finish jangan di-hardcode **[A11]**.
-- Setelah start ditekan, tidak ada intervensi manusia. Setelah pelanggaran, manusia menekan emergency, memindahkan robot ke checkpoint terakhir, lalu menekan start lagi. **Program harus melanjutkan (hitungan checkpoint tidak boleh reset)**; verifikasi perilaku ini di setiap perubahan state machine.
+## Hard constraints from the competition (no design may violate these)
+- Infrared sensors and line followers are banned. No sensors other than the camera without organizer confirmation **[A5]**.
+- Any communication to control the robot during a run is banned, wireless or wired.
+- Omni and mecanum wheels are banned. A physical emergency stop button and a start button are required.
+- Marking color (white/black) follows the floor; checkpoint and start/finish colors are not guaranteed. Keep all colors configurable **[A11]**.
+- After start is pressed, no human intervention. On violation, a human presses emergency stop, places the robot at the last checkpoint, and presses start again. **The program must resume (checkpoint count must not reset)**; verify this on every state machine change. Planned states: `BOOT → WAIT_START → RUN → STOPPED (emergency) → WAIT_START → RUN`.
+- Scoring driver: checkpoint count outweighs the speed bonus, and leaving the track costs `0.8 * T_stage / N_cp` seconds — prefer conservative speed over fast-and-wrecked.
 
-## Aturan kerja untuk agent
-1. **Asumsikan programmer kurang paham elektrikal.** Saat menyentuh GPIO, motor, servo, baterai, atau kabel, jelaskan singkat dalam bahasa sederhana: tegangan, arus, level logika, ground bersama.
-2. **Jangan menebak fakta hardware** (model Jetson, tegangan baterai, motor driver, pin). Tanyakan atau minta dicek; catat jawabannya di `docs/hardware.md`.
-3. **Beri peringatan eksplisit** sebelum perubahan yang berisiko merusak hardware: pin GPIO Jetson adalah 3,3 V, jangan hubungkan sinyal 5 V langsung; jangan menyuplai motor dari pin Jetson; jangan jalankan aktuator tanpa jalur emergency stop yang teruji.
-4. **Safe by default:** kode aktuator harus berawal dari keadaan berhenti (throttle 0, steering netral), dan kembali ke sana saat error, kehilangan frame, atau exception.
-5. **Uji tanpa hardware dulu:** sim atau rekaman video nyata, baru Jetson dengan roda terangkat, baru lintasan.
-6. Perubahan model atau parameter yang memengaruhi latency harus disertai pengukuran FPS/latency di Jetson, bukan hanya di laptop.
-7. Jika sebuah perintah belum ditentukan di bagian di bawah, jangan mengarang; tanyakan atau usulkan, lalu catat setelah disetujui.
+## Working rules for agents
+1. **Assume the programmers know little about electrical engineering.** When touching GPIO, motors, servos, batteries, or cables, explain briefly in plain language: voltage, current, logic levels, shared ground (details: `research-plan.md` §3).
+2. **Do not guess hardware facts** (Jetson model details, battery voltage, motor driver, pins). Ask, or request verification; record answers in `docs/hardware.md`.
+3. **Give explicit warnings** before changes that could damage hardware: Jetson GPIO pins are 3.3 V and not 5 V tolerant — do not connect 5 V signals directly; do not power motors from Jetson pins; do not run actuators without a tested hardware e-stop path.
+4. **Safe by default:** actuator code must start from a stopped state (throttle 0, steering neutral) and return there on error, frame loss, or exception.
+5. **Test without hardware first:** sim or recorded real video (replay recordings through the same pipeline as regression tests), then Jetson with wheels lifted, then the track.
+6. Any change to model or parameters that affects latency must include FPS/latency measured on the Jetson, not only on the laptop.
+7. If a command is not defined below, do not invent it. Ask, or propose one and record it after approval.
 
-## Struktur repo (rencana, ubah sesuai kenyataan)
+## Repo layout
 ```
 AGENTS.md
-docs/        ksti-mav-rules.md, research-plan.md, hardware.md
-configs/     sim.yaml, prototype.yaml, deploy.yaml
-src/         perception/, planning/, control/, io/ (camera, actuator: sim & real)
-models/      prototype/, deploy/
+configs/     sim.yaml, prototype.yaml, deploy.yaml, vehicle.yaml
+docs/        ksti-mav-rules.md, research-plan.md (hardware.md: to be created)
+models/      prototype/, deploy/ (only .gitkeep — weights are gitignored)
 scripts/     setup_dev.sh, setup_jetson.sh, run.sh
-tests/
+src/mav/     __main__.py (entry point); io/ control/ perception/ planning/ (empty packages)
+tests/       only .gitkeep — no tests yet
+data/        recordings/, calibration/ (contents gitignored)
 ```
 
-## Perintah (belum ditentukan, isi setelah disepakati)
-- Setup dev: _TBD_
-- Setup Jetson: _TBD_
-- Jalankan sim: _TBD_
-- Jalankan di Jetson (profil prototype/deploy): _TBD_
-- Tes: _TBD_
+## Commands (run from repo root, bash)
+- Dev setup (laptop, x86_64): `scripts/setup_dev.sh` — creates `.venv`, installs `requirements-dev.txt`.
+- Jetson setup (Orin Nano, aarch64): `scripts/setup_jetson.sh` — venv with `--system-site-packages` so JetPack's OpenCV/TensorRT stay visible; installs only `pyyaml` (numpy/CV/TensorRT/PyTorch come from JetPack).
+- Run a profile: `scripts/run.sh <sim|prototype|deploy>` (default: `prototype`). Sets `MAV_PROFILE` and `PYTHONPATH=src`, runs `python -m mav`. Currently `__main__.py` only loads and prints the profile config; the pipeline is not wired yet.
+- Config loading: `src/mav/__main__.py` resolves `configs/<profile>.yaml` relative to the package file (`parents[2]` = repo root), so it works from any cwd.
+- Tests: `source .venv/bin/activate && pytest` (no tests exist yet — add them under `tests/`).
+- JetPack check (on the Jetson, before version-dependent installs): `cat /etc/nv_tegra_release && apt show nvidia-jetpack`.
+- The web simulator's own launch command is TBD (its stack and frame/command interface are not yet known).
+
+## Gotchas
+- `.gitignore` excludes `models/**/*.onnx`, `*.pt`, `*.engine` — engines are tied to device and JetPack version. Never commit model weights.
+- `configs/vehicle.yaml` (`wheel_base_mm`, `track_width_mm`, `max_steer_deg`) is all `null` — fill from real measurements; it is shared by sim and control.
+- Competition is 12 Nov 2026 (Technical Meeting 8 Nov). Time is short — follow the P0 → P1 order in `research-plan.md` §4; a reliable robot beats an elegant one.
