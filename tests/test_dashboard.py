@@ -157,7 +157,7 @@ def test_reset_restarts_the_same_scenario():
 def test_detect_with_debug_matches_detect():
     """The debug variant must not change the measurement it reports."""
     from mav.perception.lane import LaneDetector
-    from tests.synthetic_lane import make_frame
+    from synthetic_lane import make_frame
 
     det = LaneDetector()
     for seed in range(5):
