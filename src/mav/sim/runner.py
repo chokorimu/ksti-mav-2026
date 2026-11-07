@@ -31,8 +31,8 @@ from mav.perception.lane import LaneConfig, LaneDetector, lookahead_row
 from mav.planning.lane_policy import LanePolicy, LanePolicyConfig
 from mav.sim.dashboard.bridge import Bridge, NullBridge
 from mav.sim.dashboard.state import Pose, SimState
-from mav.sim.scenarios import SCENARIOS, Scenario, get_scenario
-from mav.sim.world import SimWorld, WorldConfig, build_path
+from mav.sim.scenarios import Scenario, get_scenario, scenario_info, scenario_names
+from mav.sim.world import LanePath, SimWorld, WorldConfig, build_path
 from mav.types import Command, STOP
 
 DEPARTURE_M = 0.25  # |offset| beyond this counts as leaving the lane centre corridor
@@ -133,7 +133,11 @@ def run_sim(
 
     def load(sc: Scenario) -> None:
         """(Re)build world + metrics. The robot then waits for START (real flow)."""
-        cell["world"] = SimWorld(build_path(sc.segments, sc.start_offset_m), cfg)
+        if sc.points is not None:
+            path = LanePath.from_points(np.asarray(sc.points, dtype=np.float64))
+        else:
+            path = build_path(sc.segments, sc.start_offset_m)
+        cell["world"] = SimWorld(path, cfg)
         cell["res"] = SimResult(scenario=sc.name)
         sm.new_attempt()
         sim_time[0] = 0.0
@@ -352,7 +356,7 @@ def _print_result(res: SimResult) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="mav.sim.runner")
-    parser.add_argument("scenario", nargs="?", help=" / ".join(sorted(SCENARIOS)))
+    parser.add_argument("scenario", nargs="?", help=" / ".join(scenario_names()))
     parser.add_argument("--steps", type=int, help="max control ticks (0 = until the scenario ends)")
     parser.add_argument("--dt", type=float, help="seconds per control tick")
     parser.add_argument("--seed", type=int, help="noise seed")
@@ -364,8 +368,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.list:
-        for s in SCENARIOS.values():
-            print(f"{s.name:10s} {s.description}")
+        for name in scenario_names():
+            n, desc = scenario_info(name)
+            print(f"{n:10s} {desc}")
         return 0
 
     cfg = _sim_config()

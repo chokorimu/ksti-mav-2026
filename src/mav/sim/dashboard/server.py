@@ -30,7 +30,7 @@ import numpy as np
 
 from mav.sim.dashboard.bridge import Control, parse_control
 from mav.sim.dashboard.state import SimState
-from mav.sim.scenarios import SCENARIOS
+from mav.sim.scenarios import scenario_info, scenario_names
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -173,8 +173,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._json(
                 {
                     "scenarios": [
-                        {"name": s.name, "description": s.description}
-                        for s in SCENARIOS.values()
+                        {"name": n, "description": scenario_info(n)[1]}
+                        for n in scenario_names()
                     ]
                 }
             )
