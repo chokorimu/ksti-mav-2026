@@ -7,10 +7,16 @@ whatever is tuned here transfers to the robot unchanged.
 Usage: `python -m mav.sim.runner [scenario] [--steps N] [--dt S] [--seed S]
 [--overlay out.mp4] [--list]`. Also reachable via `scripts/run.sh sim`
 (MAV_PROFILE=sim), which reads defaults from configs/sim.yaml.
+
+`bridge=` attaches a viewer (web dashboard): the runner publishes a SimState and
+the camera frame every tick and drains controls (start / emergency / scenario /
+reset). Without a bridge the run is identical to the pre-dashboard behaviour,
+which tests/test_dashboard.py asserts by comparing results with the same seed.
 """
 from __future__ import annotations
 
 import argparse
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -18,11 +24,13 @@ from mav.app import step
 from mav.control.state_machine import RobotStateMachine
 from mav.io.actuator import CallbackActuator, SafeActuator
 from mav.io.camera import CallbackCamera
-from mav.io.buttons import Event, ScriptedButtons
+from mav.io.buttons import Event, QueueButtons
 from mav.perception.lane import LaneConfig, LaneDetector, lookahead_row
 from mav.planning.lane_policy import LanePolicy, LanePolicyConfig
+from mav.sim.dashboard.bridge import Bridge, NullBridge
+from mav.sim.dashboard.state import Pose, SimState
 from mav.sim.scenarios import SCENARIOS, Scenario, get_scenario
-from mav.sim.world import LanePath, SimWorld, WorldConfig, build_path
+from mav.sim.world import SimWorld, WorldConfig, build_path
 from mav.types import Command, STOP
 
 DEPARTURE_M = 0.25  # |offset| beyond this counts as leaving the lane centre corridor
@@ -48,6 +56,11 @@ class SimResult:
     def detection_rate(self) -> float:
         return self.detected / self.steps if self.steps else 0.0
 
+    @property
+    def mean_abs_offset_so_far(self) -> float:
+        """Running mean. `mean_abs_offset` itself stays a SUM until the run ends."""
+        return self.mean_abs_offset / max(1, self.detected)
+
 
 def _default_detector(cfg: WorldConfig) -> LaneDetector:
     """Detector whose px_per_m matches the world's scale at the lookahead row."""
@@ -57,6 +70,13 @@ def _default_detector(cfg: WorldConfig) -> LaneDetector:
     return LaneDetector(
         LaneConfig(px_per_m=cfg.scale_at(y_look_m), bottom_row_m=cfg.y_near_m)
     )
+
+
+def _pace(tick_start: float, dt: float) -> None:
+    """Sleep so one tick costs about dt of wall time (dashboard viewing only)."""
+    remaining = dt - (time.perf_counter() - tick_start)
+    if remaining > 0:
+        time.sleep(remaining)
 
 
 def run_sim(
@@ -71,22 +91,39 @@ def run_sim(
     world_cfg: WorldConfig | None = None,
     overlay_path: str | None = None,
     record: bool = True,
+    bridge: Bridge | None = None,
+    realtime: bool = False,
 ) -> SimResult:
-    """Drive one scenario through the real step() loop. Never touches hardware."""
+    """Drive one scenario through the real step() loop. Never touches hardware.
+
+    max_steps <= 0 runs until the scenario ends or a control stops it (dashboard).
+    bridge: viewer that receives a SimState + frame per tick and can push controls.
+    realtime: pace the loop to ~dt of wall time per tick, for watching.
+    """
     if isinstance(scenario, str):
         scenario = get_scenario(scenario)
     cfg = world_cfg or WorldConfig(seed=seed)
-    world = SimWorld(build_path(scenario.segments, scenario.start_offset_m), cfg)
     det = detector or _default_detector(cfg)
     pol = policy or LanePolicy(policy_cfg)
+    view = bridge if bridge is not None else NullBridge()
 
     sm = RobotStateMachine()
-    sm.boot_done()
-    buttons = ScriptedButtons({0: [Event.START]})
+    buttons = QueueButtons()
     sim_time = [0.0]
+    cell: dict = {"world": None, "res": None}
+    last: dict = {"frame": None, "meas": None, "debug": {}}
+
+    def load(sc: Scenario) -> None:
+        """(Re)build world + metrics. The robot then waits for START (real flow)."""
+        cell["world"] = SimWorld(build_path(sc.segments, sc.start_offset_m), cfg)
+        cell["res"] = SimResult(scenario=sc.name)
+        sm.new_attempt()
+        sim_time[0] = 0.0
+
+    load(scenario)
 
     def send(cmd: Command) -> None:
-        world.apply(cmd, dt)
+        cell["world"].apply(cmd, dt)
         sim_time[0] += dt
 
     actuator = SafeActuator(
@@ -96,19 +133,24 @@ def run_sim(
         clock=lambda: sim_time[0],
     )
 
-    last: dict = {"frame": None, "meas": None}
-
     def get_frame():
-        f = world.frame()
+        f = cell["world"].frame()
         last["frame"] = f
         return f
 
     camera = CallbackCamera(get_frame)
-    res = SimResult(scenario=scenario.name)
+    buttons.push(Event.START)
 
     def policy_fn(frame, _sm):
-        meas = det.detect(frame) if frame is not None else None
+        res = cell["res"]
+        world = cell["world"]
+        meas = None
+        debug: dict = {}
+        if frame is not None:
+            meas, debug = det.detect_with_debug(frame)
         last["meas"] = meas
+        last["debug"] = debug
+        res.steps += 1  # one driving tick (policy_fn only runs while RUN)
         if meas is None:
             res.lost += 1
         else:
@@ -126,25 +168,96 @@ def run_sim(
             )
         return cmd
 
+    def publish(cmd: Command, fps: float) -> None:
+        res, world = cell["res"], cell["world"]
+        h = cfg.size[0]
+        look_row = lookahead_row(det.cfg, h)
+        look_m = det.cfg.bottom_row_m + (h - 1 - look_row) / det.cfg.px_per_m
+        meas = last["meas"]
+        view.publish(
+            SimState(
+                step=res.steps,
+                t=world.t,
+                scenario=res.scenario,
+                robot_state=sm.state.value,
+                checkpoints=sm.checkpoints,
+                pose=Pose(world.x, world.y, world.theta),
+                lookahead_m=look_m,
+                true_offset_m=world.true_offset_at(look_m),
+                measurement=None
+                if meas is None
+                else {
+                    "offset_m": meas.offset_m,
+                    "curvature_inv_m": meas.curvature_inv_m,
+                    "confidence": meas.confidence,
+                    "n_points": meas.n_points,
+                    "lookahead_m": meas.lookahead_m,
+                },
+                debug=last["debug"],
+                command={"speed": cmd.speed, "curvature": cmd.curvature},
+                metrics={
+                    "detected": res.detected,
+                    "lost": res.lost,
+                    "departures": res.departures,
+                    "max_abs_offset": res.max_abs_offset,
+                    "mean_abs_offset": res.mean_abs_offset_so_far,
+                    "stop_frames": res.stop_frames,
+                    "detection_rate": res.detection_rate,
+                    "distance_m": world.distance,
+                    "time_s": world.t,
+                    "crashed": world.crashed,
+                    "finished": world.finished,
+                },
+                fps=fps,
+            ),
+            last["frame"],
+        )
+
     writer = None
+    ticks = 0
+    fps = 0.0
+    tick_start = time.perf_counter()
     try:
-        while res.steps < max_steps and not world.crashed and not world.finished:
-            step(sm, camera, buttons, actuator, policy_fn)
-            res.steps += 1
+        while max_steps <= 0 or ticks < max_steps:
+            ctrl = view.poll_control()
+            if ctrl is not None:
+                if ctrl.action == "start":
+                    buttons.push(Event.START)
+                elif ctrl.action == "emergency":
+                    buttons.push(Event.EMERGENCY)
+                elif ctrl.action == "scenario":
+                    load(get_scenario(ctrl.scenario))
+                    buttons.clear()  # wait for a fresh START
+                elif ctrl.action == "reset":
+                    load(scenario)
+                    buttons.clear()
+            world = cell["world"]
+            if world.crashed or world.finished:
+                break
+            cmd = step(sm, camera, buttons, actuator, policy_fn)
+            ticks += 1
             if overlay_path is not None and last["frame"] is not None:
                 writer = _overlay_writer(writer, overlay_path, last["frame"])
                 _draw_overlay(last["frame"], last["meas"], world, det.cfg)
                 writer.write(last["frame"])
+            now = time.perf_counter()
+            instant = 1.0 / max(now - tick_start, 1e-9)
+            fps = instant if fps == 0.0 else 0.9 * fps + 0.1 * instant
+            tick_start = now
+            publish(cmd, fps)
+            if realtime:
+                _pace(tick_start, dt)
     finally:
         camera.close()
         if writer is not None:
             writer.release()
 
-    res.distance_m = world.distance
-    res.time_s = world.t
+    res = cell["res"]
+    res.distance_m = cell["world"].distance
+    res.time_s = cell["world"].t
     res.mean_abs_offset /= max(1, res.detected)
-    res.crashed = world.crashed
-    res.finished = world.finished
+    res.crashed = cell["world"].crashed
+    res.finished = cell["world"].finished
     return res
 
 
@@ -202,10 +315,13 @@ def _print_result(res: SimResult) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="mav.sim.runner")
     parser.add_argument("scenario", nargs="?", help=" / ".join(sorted(SCENARIOS)))
-    parser.add_argument("--steps", type=int, help="max control ticks")
+    parser.add_argument("--steps", type=int, help="max control ticks (0 = until the scenario ends)")
     parser.add_argument("--dt", type=float, help="seconds per control tick")
     parser.add_argument("--seed", type=int, help="noise seed")
     parser.add_argument("--overlay", help="write an overlay video to this path")
+    parser.add_argument("--realtime", action="store_true", help="pace the loop to dt per tick")
+    parser.add_argument("--dashboard", action="store_true",
+                        help="serve the web dashboard while running (configs/sim.yaml)")
     parser.add_argument("--list", action="store_true", help="list scenarios and exit")
     args = parser.parse_args(argv)
 
@@ -216,14 +332,31 @@ def main(argv: list[str] | None = None) -> int:
 
     cfg = _sim_config()
     name = args.scenario or cfg.get("scenario", "straight")
+    dash = (cfg.get("dashboard") or {}) if args.dashboard else {}
+    bridge = None
+    server = None
+    if dash:
+        from mav.sim.dashboard.server import serve_in_thread
+
+        server, bridge = serve_in_thread(dash)
+
     res = run_sim(
         name,
         dt=args.dt if args.dt is not None else float(cfg.get("dt", 0.05)),
         max_steps=args.steps if args.steps is not None else int(cfg.get("max_steps", 1200)),
         seed=args.seed if args.seed is not None else int(cfg.get("seed", 0)),
         overlay_path=args.overlay or cfg.get("overlay"),
+        realtime=args.realtime or bool(dash.get("realtime", False)),
+        bridge=bridge,
     )
     _print_result(res)
+    if server is not None:
+        print(f"dashboard: http://{dash.get('host', '127.0.0.1')}:{dash.get('port', 8000)}")
+        try:
+            input("press Enter to stop the dashboard... ")
+        except (EOFError, KeyboardInterrupt):
+            pass
+        server.shutdown()
     return 0 if not res.crashed else 1
 
 

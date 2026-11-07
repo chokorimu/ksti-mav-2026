@@ -147,6 +147,15 @@ class LaneDetector:
         self.cfg = cfg or LaneConfig()
 
     def detect(self, frame: np.ndarray) -> LaneMeasurement | None:
+        """LaneMeasurement or None. detect_with_debug() returns the same plus internals."""
+        return self.detect_with_debug(frame)[0]
+
+    def detect_with_debug(self, frame: np.ndarray) -> tuple[LaneMeasurement | None, dict]:
+        """detect() plus a dict of the internals the dashboard overlay needs.
+
+        The measurement is identical to detect(); only extra information comes
+        back. The dict becomes JSON-safe through SimState.to_dict().
+        """
         arr = np.asarray(frame)
         if arr.ndim != 3 or arr.shape[2] != 3 or arr.dtype != np.uint8:
             raise ValueError(f"expected an HxWx3 uint8 BGR frame, got {arr.dtype} {arr.shape}")
@@ -155,8 +164,10 @@ class LaneDetector:
         h, w = arr.shape[:2]
         gray = arr[..., :3].astype(np.float32) @ _LUM
         y0 = int(cfg.roi_top * h)
+        debug: dict = {"h": h, "w": w, "roi_top": y0, "reason": None}
         if h - y0 < cfg.min_points * 4:
-            return None
+            debug["reason"] = "roi too small"
+            return None, debug
         roi = gray[y0:]
 
         resid = roi - _background(roi, cfg.bg_ksize)
@@ -165,34 +176,61 @@ class LaneDetector:
             "light": resid > cfg.thresh_k * sigma,
             "dark": resid < -cfg.thresh_k * sigma,
         }
+        debug.update(
+            sigma=sigma,
+            threshold=cfg.thresh_k * sigma,
+            light_frac=float(masks["light"].mean()),
+            dark_frac=float(masks["dark"].mean()),
+        )
 
         best: LaneMeasurement | None = None
+        best_debug: dict = {}
         for name, mask in masks.items():
             if cfg.polarity != "auto":
                 if name != cfg.polarity:
                     continue
             elif not (cfg.mask_frac_band[0] <= mask.mean() <= cfg.mask_frac_band[1]):
                 continue  # implausible marking coverage for this polarity
-            meas = self._fit(mask, y0, h, w)
+            meas, mdbg = self._fit_debug(mask, name, y0, h, w)
             if meas is not None and (best is None or meas.confidence > best.confidence):
-                best = meas
+                best, best_debug = meas, mdbg
 
-        if best is None or best.confidence < cfg.min_confidence:
-            return None
-        return best
+        debug.update(best_debug)
+        if best is None:
+            debug["reason"] = "no fit" if best_debug.get("polarity") else "no candidate mask"
+            return None, debug
+        if best.confidence < cfg.min_confidence:
+            debug["reason"] = "low confidence"
+            return None, debug
+        return best, debug
 
-    def _fit(self, mask: np.ndarray, y0: int, h: int, w: int) -> LaneMeasurement | None:
+    def _fit_debug(
+        self, mask: np.ndarray, polarity: str, y0: int, h: int, w: int
+    ) -> tuple[LaneMeasurement | None, dict]:
+        """Fit one polarity mask. Returns (measurement or None, debug dict)."""
         cfg = self.cfg
         pts = _band_points(mask, cfg.n_bands, cfg.min_band_pixels)
+        debug: dict = {
+            "polarity": polarity,
+            "mask_pixels": int(mask.sum()),
+            "n_bands_with_pixels": len(pts),
+            "band_points": [[p[0], p[1], p[2]] for p in pts],
+        }
         if len(pts) < cfg.min_points:
-            return None
+            return None, debug
         a, b, c, resid = _fit_quadratic(pts)
 
         # The fit works in ROI-relative rows; convert the lookahead row to match.
         y_look_roi = lookahead_row(cfg, h) - y0
         x_look = a * y_look_roi * y_look_roi + b * y_look_roi + c
+        debug.update(
+            fit={"a": a, "b": b, "c": c},
+            resid=resid,
+            lookahead_row=lookahead_row(cfg, h),
+            lookahead_x=x_look,
+        )
         if not 0.0 <= x_look <= w:
-            return None  # fitted centre left the image: not a lane
+            return None, debug  # fitted centre left the image: not a lane
 
         offset_m = (x_look - w / 2.0) / cfg.px_per_m
         curvature = -2.0 * a * cfg.px_per_m  # u(v) = U0 - (k/(2s))(v_near-v)^2 -> k = -2*a*s
@@ -205,12 +243,15 @@ class LaneDetector:
         c_struct = min(1.0, max(0.0, (_structure_score(mask) - 0.35) / 0.45))
         confidence = f_pts * (0.4 + 0.6 * f_res) * f_mask * (0.15 + 0.85 * c_struct)
 
-        return LaneMeasurement(
-            offset_m=offset_m,
-            lookahead_m=lookahead_m,
-            curvature_inv_m=curvature,
-            confidence=confidence,
-            n_points=len(pts),
+        return (
+            LaneMeasurement(
+                offset_m=offset_m,
+                lookahead_m=lookahead_m,
+                curvature_inv_m=curvature,
+                confidence=confidence,
+                n_points=len(pts),
+            ),
+            debug,
         )
 
 
