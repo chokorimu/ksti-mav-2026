@@ -36,7 +36,7 @@ Green checkpoints (not necessarily marked), start/finish color uncertain, obstac
 - A **state machine** is required: `BOOT → WAIT_START → RUN → STOPPED (emergency) → WAIT_START → RUN ...`. After a manual restart at the last checkpoint, the checkpoint count must not reset and the robot must find the lane again quickly (assumption: placed at the checkpoint, possibly at an angle).
 
 ### RQ4 – Headless Jetson
-- Camera: CSI (GStreamer pipeline `nvarguscamerasrc`) vs USB (V4L2). Verify the OpenCV build on the Jetson (`cv2.getBuildInformation()`: GStreamer, CUDA).
+- Camera: CSI (GStreamer pipeline `nvarguscamerasrc`) vs USB (V4L2). The Jetson's OpenCV 4.8.0 has GStreamer support (so CSI capture via GStreamer works) but no CUDA in its build info, so classical CV runs on CPU; the GPU is used through TensorRT.
 - No display: no `imshow`; use frame/video saving, logs, and an MJPEG stream for dev only. Working tools: SSH, tmux, VS Code Remote-SSH, rsync/git.
 - Monitor performance and temperature: `tegrastats`, `nvpmodel`, `jetson_clocks`. Set the same power mode for testing and competition.
 - Autostart at boot with a service (systemd) that waits for the physical start button, since no communication to the robot is allowed during a run.
@@ -49,6 +49,7 @@ Green checkpoints (not necessarily marked), start/finish color uncertain, obstac
 
 ### RQ6 – Prototype → deploy model
 - Flow: train/test on laptop or sim → export (e.g. ONNX) → optimize for Jetson (e.g. TensorRT, lower precision if accuracy holds) → parity test.
+- TensorRT 10.3 runtime and ONNX parser are installed; `trtexec` and the Python bindings were not seen in the package list and must be verified (see `docs/hardware.md`).
 - Parity test: for the same set of frames, the output difference between prototype and deploy models must be below an agreed threshold; also measure FPS/latency.
 - Profile selection via `configs/*.yaml` and one variable (e.g. `MAV_PROFILE`), not code branches. The `deploy` profile disables all network and debug components.
 
@@ -78,7 +79,7 @@ This is a general guide; confirm with someone who knows electrical engineering b
 5. **Batteries.** Use a fuse or current protection on the main path, watch polarity, and follow safe LiPo procedures. Check voltage before every attempt.
 6. **Actuators.** Set steering angle and throttle limits in software so servos/chassis are not forced past their limits.
 7. **Cables and connectors.** Loose connectors cause random resets. Lock cables and add strain relief. Plan so no part can detach (a detached part = attempt ends).
-8. **Heat.** The Jetson and motor driver need airflow; test under sustained load for at least 5 minutes (the attempt length).
+8. **Heat.** The Jetson and motor driver need airflow; test under sustained load for at least 5 minutes (the attempt length). The Jetson is currently in `MAXN_SUPER` (highest power mode, highest draw): size its regulator for it, or choose a lower mode, and use the same mode in tests and in competition.
 
 Questions an electrical engineer must answer: which motor and driver are used, battery voltage and capacity, motor peak current, regulator for the Jetson, emergency stop circuit (what it cuts), pins used and their levels.
 

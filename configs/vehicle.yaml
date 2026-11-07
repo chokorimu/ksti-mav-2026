@@ -1,4 +1,6 @@
-# Isi dengan hasil pengukuran nyata, jangan ditebak.
-wheel_base_mm: null
-track_width_mm: null
-max_steer_deg: null
+# Measure the real robot and fill in. null = not measured yet; load_vehicle_params() refuses to run.
+drive: null            # "differential" (prototype: 4 driven wheels) or "ackermann" (deploy: servo steering)
+wheel_base_mm: null    # front axle center to rear axle center
+track_width_mm: null   # left wheel center to right wheel center, same axle
+max_steer_deg: null    # servo steering limit at the wheels (ignored by differential)
+max_speed_mps: null    # start low and raise after testing
