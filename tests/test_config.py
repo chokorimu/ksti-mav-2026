@@ -1,124 +1,216 @@
-"""Profile config loading: configs/<profile>.yaml -> LaneConfig / CheckpointConfig.
+"""Profile configuration: configs/<profile>.yaml -> perception dataclasses.
 
-The point of mav.config is that a camera move or an arena colour reading is a
-CONFIG edit, so these tests pin the mapping (YAML lists -> tuples, wrapping
-hue bands, unknown keys, out-of-range values) and that every shipped profile
-still parses.
+Two things in this repo are per-profile CONFIG rather than constants in code:
+
+  * lane geometry (`px_per_m`, `bottom_row_m`, `roi_top`, `max_band_span_m`).
+    The camera mount is not fixed, so a camera move is a config edit here,
+    never a code edit.
+  * cross-line colours [A11]. The rules forbid hardcoding the checkpoint or
+    start/finish colour without confirmation, so the hue bands are parameters
+    whose defaults follow the guidebook text and stay UNCONFIRMED until they
+    are read off the arena on test day.
+
+The shape follows `load_vehicle_params()` in mav/types.py: read the YAML, map
+the section onto the dataclass, and fail loudly on an unknown key - a typo in
+a config file must never silently fall back to a default.
 """
-import tempfile
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+from dataclasses import fields
 from pathlib import Path
 
 import pytest
+import yaml
 
 from mav.config import (
+    DEFAULT_PROFILE,
     load_checkpoint_config,
     load_lane_config,
     load_profile,
-    profile_name,
+    profile_path,
 )
 from mav.perception.checkpoint import CheckpointConfig
 from mav.perception.lane import LaneConfig
 
-
-def _root(text: str, profile: str = "prototype") -> Path:
-    """A throwaway repo root holding configs/<profile>.yaml with `text`."""
-    d = Path(tempfile.mkdtemp())
-    (d / "configs").mkdir()
-    (d / "configs" / f"{profile}.yaml").write_text(text)
-    return d
+REPO = Path(__file__).resolve().parents[1]
 
 
-def test_missing_sections_keep_the_code_defaults():
-    cfg = load_lane_config("prototype", _root("profile: prototype\n"))
-    assert cfg == LaneConfig()
-    cp = load_checkpoint_config("prototype", _root("profile: prototype\n"))
-    assert cp == CheckpointConfig()
+@pytest.fixture()
+def tmp_root(tmp_path):
+    """A fake repo: root/configs/<profile>.yaml, like the real layout."""
+    (tmp_path / "configs").mkdir()
+    return tmp_path
 
 
-def test_lane_geometry_comes_from_config():
-    root = _root("lane:\n  px_per_m: 1050.0\n  bottom_row_m: 0.45\n  roi_top: 0.7\n")
-    cfg = load_lane_config("prototype", root)
-    assert cfg.px_per_m == 1050.0
-    assert cfg.bottom_row_m == 0.45
-    assert cfg.roi_top == 0.7
+def write_cfg(root, profile, text):
+    (root / "configs" / f"{profile}.yaml").write_text(text)
+    return root
 
 
-def test_null_disables_the_band_gate():
-    # The one scalar where `null` is meaningful: it turns the gate off.
-    root = _root("lane:\n  max_band_span_m: null\n")
-    assert load_lane_config("prototype", root).max_band_span_m is None
+# ---------------------------------------------------------------- defaults ----
+def test_lane_config_defaults_when_no_section(tmp_root):
+    write_cfg(tmp_root, "p", "profile: p\n")
+    cfg = load_lane_config("p", root=tmp_root)
+    assert cfg == LaneConfig()  # every field keeps its code default
 
 
-def test_pair_field_becomes_a_tuple():
-    root = _root("lane:\n  mask_frac_band: [0.02, 0.2]\n")
-    assert load_lane_config("prototype", root).mask_frac_band == (0.02, 0.2)
+def test_checkpoint_config_defaults_when_no_section(tmp_root):
+    write_cfg(tmp_root, "p", "profile: p\n")
+    cfg = load_checkpoint_config("p", root=tmp_root)
+    assert cfg == CheckpointConfig()
+    assert cfg.finish_hues == ()  # [A11] unknown colour: disabled
 
 
-def test_hue_bands_become_tuples_and_may_wrap():
-    root = _root(
-        "checkpoint:\n"
-        "  checkpoint_hues: [[90, 150]]\n"
-        "  finish_hues: [[340, 20]]\n"
-    )
-    cfg = load_checkpoint_config("prototype", root)
+# ---------------------------------------------------------------- section read ----
+def test_lane_config_reads_the_section(tmp_root):
+    write_cfg(tmp_root, "p", """
+lane:
+  px_per_m: 964.0
+  bottom_row_m: 0.45
+  roi_top: 0.7
+  max_band_span_m: 0.6
+""")
+    cfg = load_lane_config("p", root=tmp_root)
+    assert (cfg.px_per_m, cfg.bottom_row_m) == (964.0, 0.45)
+    assert (cfg.roi_top, cfg.max_band_span_m) == (0.7, 0.6)
+
+
+def test_checkpoint_config_reads_the_section(tmp_root):
+    write_cfg(tmp_root, "p", """
+checkpoint:
+  checkpoint_hues: [[90.0, 150.0]]
+  finish_hues: [[340.0, 20.0]]
+  min_saturation: 0.5
+""")
+    cfg = load_checkpoint_config("p", root=tmp_root)
     assert cfg.checkpoint_hues == ((90.0, 150.0),)
-    # lo > hi is a band that wraps around 360 (red), not an error.
-    assert cfg.finish_hues == ((340.0, 20.0),)
+    assert cfg.finish_hues == ((340.0, 20.0),)  # wraps around 360
+    assert cfg.min_saturation == 0.5
 
 
-def test_empty_hue_list_disables_that_kind():
-    root = _root("checkpoint:\n  checkpoint_hues: []\n")
-    cfg = load_checkpoint_config("prototype", root)
-    assert cfg.checkpoint_hues == ()
-    assert cfg.finish_hues == ()  # still the default (disabled) [A11]
+def test_pair_fields_accept_a_two_item_list(tmp_root):
+    write_cfg(tmp_root, "p", "lane: {mask_frac_band: [0.02, 0.2]}\n")
+    cfg = load_lane_config("p", root=tmp_root)
+    assert cfg.mask_frac_band == (0.02, 0.2)
 
 
-def test_unknown_key_names_itself():
-    root = _root("lane:\n  px_per_mm: 130\n")
-    with pytest.raises(ValueError, match="px_per_mm"):
-        load_lane_config("prototype", root)
+# ---------------------------------------------------------------- bad input ----
+def test_unknown_lane_key_raises(tmp_root):
+    write_cfg(tmp_root, "p", "lane: {px_per_m: 130.0, bogus: 1}\n")
+    with pytest.raises(ValueError) as exc:
+        load_lane_config("p", root=tmp_root)
+    assert "unknown key(s)" in str(exc.value) and "bogus" in str(exc.value)
 
 
-def test_hue_outside_0_360_is_refused():
-    root = _root("checkpoint:\n  checkpoint_hues: [[90, 400]]\n")
-    with pytest.raises(ValueError, match="outside 0..360"):
-        load_checkpoint_config("prototype", root)
+def test_unknown_checkpoint_key_raises(tmp_root):
+    write_cfg(tmp_root, "p", "checkpoint: {finish_hues: [], nope: 3}\n")
+    with pytest.raises(ValueError) as exc:
+        load_checkpoint_config("p", root=tmp_root)
+    assert "unknown key(s)" in str(exc.value) and "nope" in str(exc.value)
 
 
-def test_out_of_range_value_is_refused():
-    root = _root("lane:\n  roi_top: 1.5\n")
-    with pytest.raises(ValueError, match="roi_top"):
-        load_lane_config("prototype", root)
+def test_bad_hue_band_shape_raises(tmp_root):
+    write_cfg(tmp_root, "p", "checkpoint: {checkpoint_hues: [[90.0]]}\n")
+    with pytest.raises(ValueError) as exc:
+        load_checkpoint_config("p", root=tmp_root)
+    assert "each hue band must be [lo, hi]" in str(exc.value)
 
 
-def test_section_that_is_not_a_mapping_is_refused():
-    root = _root("lane: 130\n")
-    with pytest.raises(ValueError, match="expected a mapping"):
-        load_lane_config("prototype", root)
+def test_hue_outside_0_360_raises(tmp_root):
+    write_cfg(tmp_root, "p", "checkpoint: {finish_hues: [[400.0, 10.0]]}\n")
+    with pytest.raises(ValueError) as exc:
+        load_checkpoint_config("p", root=tmp_root)
+    assert "outside 0..360" in str(exc.value)
 
 
-def test_missing_profile_file_is_an_error_not_silent_defaults():
-    with pytest.raises(FileNotFoundError):
-        load_lane_config("no-such-profile", _root("lane: {}\n"))
+def test_out_of_range_lane_value_raises(tmp_root):
+    write_cfg(tmp_root, "p", "lane: {roi_top: 1.5}\n")
+    with pytest.raises(ValueError) as exc:
+        load_lane_config("p", root=tmp_root)
+    assert "roi_top=1.5" in str(exc.value) and "above" in str(exc.value)
 
 
-def test_profile_name_follows_the_env(monkeypatch):
+def test_out_of_range_checkpoint_value_raises(tmp_root):
+    write_cfg(tmp_root, "p", "checkpoint: {min_saturation: 2.0}\n")
+    with pytest.raises(ValueError) as exc:
+        load_checkpoint_config("p", root=tmp_root)
+    assert "min_saturation=2" in str(exc.value) and "above" in str(exc.value)
+
+
+def test_section_must_be_a_mapping(tmp_root):
+    write_cfg(tmp_root, "p", "lane: 42\n")
+    with pytest.raises(ValueError) as exc:
+        load_lane_config("p", root=tmp_root)
+    assert "expected a mapping" in str(exc.value)
+
+
+def test_missing_profile_file_raises(tmp_root):
+    with pytest.raises(FileNotFoundError) as exc:
+        load_profile("nope", root=tmp_root)
+    assert "no config for profile 'nope'" in str(exc.value)
+
+
+# ---------------------------------------------------------------- null gates ----
+def test_null_disables_an_optional_gate(tmp_root):
+    write_cfg(tmp_root, "p", "lane: {max_band_span_m: null}\n")
+    cfg = load_lane_config("p", root=tmp_root)
+    assert cfg.max_band_span_m is None  # the band gate is off
+
+
+def test_null_on_a_tuple_field_keeps_the_default(tmp_root):
+    write_cfg(tmp_root, "p", "checkpoint: {checkpoint_hues: null}\n")
+    cfg = load_checkpoint_config("p", root=tmp_root)
+    assert cfg.checkpoint_hues == ((90.0, 150.0),)  # the code default
+
+
+# ---------------------------------------------------------------- env / paths ----
+def test_profile_env_var_picks_the_profile(tmp_root, monkeypatch):
+    write_cfg(tmp_root, "final", "lane: {px_per_m: 964.0}\n")
     monkeypatch.setenv("MAV_PROFILE", "final")
-    assert profile_name() == "final"
-    assert profile_name("sim") == "sim"  # an explicit name wins
+    assert profile_path(root=tmp_root) == tmp_root / "configs" / "final.yaml"
+    assert load_lane_config(root=tmp_root).px_per_m == 964.0
 
 
-def test_every_shipped_profile_parses():
-    for name in ("sim", "prototype", "final"):
-        data = load_profile(name)
-        assert data["profile"] == name
-        load_lane_config(name)
-        load_checkpoint_config(name)
+def test_default_profile_is_prototype():
+    assert DEFAULT_PROFILE == "prototype"
 
 
-def test_final_stays_serverless():
-    # final: no network server, streaming, or SSH dependency while it runs.
-    data = load_profile("final")
-    assert data["network"]["enabled"] is False
-    assert "dashboard" not in data
-    assert "sim" not in data
+# ---------------------------------------------------------------- shipped configs ----
+@pytest.mark.parametrize("profile", ["sim", "prototype", "final"])
+def test_every_shipped_profile_parses(profile):
+    lane = load_lane_config(profile)
+    cp = load_checkpoint_config(profile)
+    assert lane.px_per_m > 0.0
+    assert cp.checkpoint_hues  # green band present...
+    assert cp.finish_hues == ()  # ...finish disabled until read off the arena [A11]
+
+
+def test_repo_profiles_are_the_real_files():
+    for profile in ("sim", "prototype", "final"):
+        assert (REPO / "configs" / f"{profile}.yaml").is_file()
+
+
+# ---------------------------------------------------------------- boot validation ----
+def test_boot_validates_both_sections():
+    for profile in ("prototype", "final"):
+        env = {**os.environ, "PYTHONPATH": str(REPO / "src"), "MAV_PROFILE": profile}
+        out = subprocess.run(
+            [sys.executable, "-m", "mav"], env=env, cwd=REPO,
+            capture_output=True, text=True, timeout=60,
+        )
+        assert out.returncode == 0, out.stderr
+        assert "lane      :" in out.stdout
+        assert "checkpoint:" in out.stdout
+        assert "px_per_m=130.0" in out.stdout
+
+
+def test_boot_fails_loudly_on_a_bad_key(tmp_root):
+    write_cfg(tmp_root, "prototype", "lane: {px_per_metre: 130.0}\n")
+    # __main__ resolves configs/ from its own file, so a bad key is tested
+    # through the loader with the same "must not fall back silently" rule.
+    with pytest.raises(ValueError) as exc:
+        load_lane_config("prototype", root=tmp_root)
+    assert "unknown key(s)" in str(exc.value)
