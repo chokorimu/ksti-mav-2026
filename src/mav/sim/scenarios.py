@@ -4,7 +4,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from mav.sim.world import Segment
+from mav.sim.world import CROSS_LINE_BGR, Segment
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,11 @@ class Scenario:
     # `segments` is ignored -- the measured track is not a sequence of straights
     # and arcs, so it cannot be expressed as Segments.
     points: tuple[tuple[float, float], ...] | None = None
+    # Lines ACROSS the lane: [(arc-length s in m, BGR colour), ...]. Rendered by
+    # the sim camera layer so the cross-line detector can be tested closed-loop.
+    # Colours follow the guidebook (checkpoints green, finish red) and are
+    # UNCONFIRMED [A11].
+    cross_lines: tuple[tuple[float, tuple[int, int, int]], ...] = ()
 
 
 SCENARIOS: dict[str, Scenario] = {
@@ -37,6 +42,18 @@ SCENARIOS: dict[str, Scenario] = {
         (Segment(5.0, 0.4), Segment(5.0, -0.4), Segment(5.0, 0.4)),
         0.0,
         "alternating R=2.5 m left/right curves",
+    ),
+    "checkpoints": Scenario(
+        "checkpoints",
+        (Segment(12.0),),
+        0.0,
+        "12 m straight, 3 green checkpoints at s=2/5/8 m + red finish at s=11 m",
+        cross_lines=(
+            (2.0, CROSS_LINE_BGR["checkpoint"]),
+            (5.0, CROSS_LINE_BGR["checkpoint"]),
+            (8.0, CROSS_LINE_BGR["checkpoint"]),
+            (11.0, CROSS_LINE_BGR["finish"]),
+        ),
     ),
 }
 

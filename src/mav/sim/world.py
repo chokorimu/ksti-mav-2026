@@ -24,6 +24,16 @@ class Segment:
     curvature: float = 0.0  # 1/m, +left
 
 
+# BGR for the cross-line kinds. Single source of truth for the sim camera
+# layer; the runner derives the detector's hue bands from these, so what is
+# rendered and what is detectable can never drift apart. Lives here (not in
+# scenarios.py) because scenarios imports this module, not the other way.
+CROSS_LINE_BGR: dict[str, tuple[int, int, int]] = {
+    "checkpoint": (0, 200, 0),   # green
+    "finish": (0, 0, 200),       # red
+}
+
+
 @dataclass(frozen=True)
 class WorldConfig:
     px_per_m: float = 130.0        # scale at the bottom row (y_near_m)
@@ -149,7 +159,7 @@ def build_path(
 class SimWorld:
     """Vehicle + lane + camera. apply(cmd, dt) integrates the pose; frame() renders."""
 
-    def __init__(self, path: LanePath, cfg: WorldConfig | None = None) -> None:
+    def __init__(self, path: LanePath, cfg: WorldConfig | None = None, cross_lines: list[tuple[float, tuple[int, int, int]]] | None = None) -> None:
         self.path = path
         self.cfg = cfg or WorldConfig()
         self.x = 0.0
@@ -158,6 +168,7 @@ class SimWorld:
         self.t = 0.0
         self.distance = 0.0
         self._rng = np.random.default_rng(self.cfg.seed)
+        self.cross_lines = list(cross_lines or [])
 
     def apply(self, cmd: Command, dt: float) -> None:
         """Integrate the pose under a constant-curvature command (exact for arcs)."""
@@ -179,6 +190,17 @@ class SimWorld:
         """Render the camera view at the current pose (blank floor if no lane in view)."""
         cfg = self.cfg
         fn = self.path.centre_x_fn(self.x, self.y, self.theta, cfg.y_near_m, cfg.y_far_m)
+        cross = None
+        if fn is not None and self.cross_lines:
+            # Cross-lines live at arc-length s on the centreline; project each
+            # one into the vehicle frame and keep the ones inside the view.
+            lateral, forward = self.path.vehicle_frame(self.x, self.y, self.theta)
+            cross = []
+            for s_m, color in self.cross_lines:
+                i = int(np.argmin(np.abs(self.path.s - s_m)))
+                y_line = float(forward[i])
+                if cfg.y_near_m - 0.1 <= y_line <= cfg.y_far_m + 0.1:
+                    cross.append((y_line, color))
         return render_frame(
             fn if fn is not None else (lambda _y: 0.0),
             y_near_m=cfg.y_near_m,
@@ -194,6 +216,7 @@ class SimWorld:
             size=cfg.size,
             rng=self._rng,
             draw_lane=fn is not None,
+            cross_lines=cross,
         )
 
     def true_offset_at(self, forward_m: float) -> float | None:

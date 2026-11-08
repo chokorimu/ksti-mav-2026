@@ -272,3 +272,62 @@ def test_tracker_does_not_change_a_run_without_lines():
         plain.steps, plain.detected, plain.lost, plain.distance_m,
     )
 
+
+# ---- closed-loop sim integration (subtask 3) -------------------------------
+# The "checkpoints" scenario renders 3 green checkpoints (s=2/5/8 m) and a red
+# finish (s=11 m) on a 12 m straight. The runner auto-creates a tracker whose
+# hue bands are derived from those rendered colours.
+
+
+def test_sim_counts_every_rendered_checkpoint():
+    from mav.sim.runner import run_sim
+
+    res = run_sim("checkpoints", seed=0)
+    assert res.checkpoints == 3
+    assert res.finished is True  # the finish line ended the run
+
+
+def test_sim_finish_line_ends_the_run_before_the_lane_does():
+    from mav.sim.runner import run_sim
+
+    res = run_sim("checkpoints", seed=0)
+    # finish at s=11 m of a 12 m path: the run must stop AT the line, not at
+    # the end of the lane (world.finished would need 11.5 m).
+    assert res.distance_m < 11.5
+    assert res.checkpoints == 3
+
+
+def test_sim_emergency_resume_keeps_the_checkpoint_count():
+    # The competition flow: emergency mid-run, robot placed at the last
+    # checkpoint, START again. The count must survive (rules §7.7).
+    from mav.sim.dashboard.bridge import Control
+    from mav.sim.runner import run_sim
+
+    class _ScriptedBridge:
+        """Pushes one control when the newest published state matches."""
+
+        def __init__(self, plan):
+            self.plan = list(plan)  # [(predicate, Control), ...]
+            self.published = []
+
+        def publish(self, state, frame):
+            self.published.append(state)
+
+        def poll_control(self):
+            for i, (pred, ctrl) in enumerate(self.plan):
+                if self.published and pred(self.published[-1]):
+                    return self.plan.pop(i)[1]
+            return None
+
+    bridge = _ScriptedBridge(
+        [
+            (lambda st: st.checkpoints >= 1, Control("emergency")),
+            (lambda st: st.robot_state == "stopped", Control("start")),
+        ]
+    )
+    res = run_sim("checkpoints", seed=0, bridge=bridge, max_steps=600)
+    states = [st.robot_state for st in bridge.published]
+    assert "stopped" in states, "the emergency must have fired mid-run"
+    assert res.checkpoints == 3  # 1 before the stop + 2 after the resume
+    assert res.finished is True
+

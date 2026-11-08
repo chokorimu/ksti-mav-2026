@@ -19,6 +19,7 @@ import argparse
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 
@@ -27,13 +28,19 @@ from mav.control.state_machine import RobotStateMachine
 from mav.io.actuator import CallbackActuator, SafeActuator
 from mav.io.camera import CallbackCamera
 from mav.io.buttons import Event, QueueButtons
-from mav.perception.checkpoint import CrossLineTracker
+from mav.perception.checkpoint import (
+    CheckpointConfig,
+    CrossLineDetector,
+    CrossLineTracker,
+    _hsv,
+)
 from mav.perception.lane import LaneConfig, LaneDetector, lookahead_row
 from mav.planning.lane_policy import LanePolicy, LanePolicyConfig
 from mav.sim.dashboard.bridge import Bridge, NullBridge
 from mav.sim.dashboard.state import Pose, SimState
+from mav.dashboard.bridge import Bridge as DashboardBridge, NullBridge as DashboardNullBridge
 from mav.sim.scenarios import Scenario, get_scenario, scenario_info, scenario_names
-from mav.sim.world import LanePath, SimWorld, WorldConfig, build_path
+from mav.sim.world import CROSS_LINE_BGR, LanePath, SimWorld, WorldConfig, build_path
 from mav.types import Command, STOP
 
 DEPARTURE_M = 0.25  # |offset| beyond this counts as leaving the lane centre corridor
@@ -78,6 +85,46 @@ def _default_detector(cfg: WorldConfig) -> LaneDetector:
     )
 
 
+def _hue_band(bgr: tuple[int, int, int], spread_deg: float = 20.0):
+    """Hue band (possibly wrapping 360) around the hue of a BGR colour."""
+    hue = float(_hsv(np.array([[bgr]], dtype=np.uint8))[0][0, 0])
+    lo, hi = hue - spread_deg, hue + spread_deg
+    if lo < 0.0:
+        return ((lo + 360.0, 360.0), (0.0, hi))
+    if hi > 360.0:
+        return ((lo, 360.0), (0.0, hi - 360.0))
+    return ((lo, hi),)
+
+
+def _sim_checkpoint_cfg(scenario: Scenario) -> CheckpointConfig:
+    """Detector config that sees exactly the cross-lines the scenario renders.
+
+    The hue bands are DERIVED from the rendered BGR colours
+    (world.CROSS_LINE_BGR), so rendering and detection cannot drift apart.
+    On the real robot these come from configs/ instead - and the finish colour
+    stays disabled there until it is read off the arena [A11].
+    """
+    colors = {color for _, color in scenario.cross_lines}
+    cfg = CheckpointConfig()
+    return CheckpointConfig(
+        checkpoint_hues=(
+            _hue_band(CROSS_LINE_BGR["checkpoint"])
+            if CROSS_LINE_BGR["checkpoint"] in colors else ()
+        ),
+        finish_hues=(
+            _hue_band(CROSS_LINE_BGR["finish"])
+            if CROSS_LINE_BGR["finish"] in colors else ()
+        ),
+        min_saturation=cfg.min_saturation,
+        min_value=cfg.min_value,
+        min_span_frac=cfg.min_span_frac,
+        target_span_frac=cfg.target_span_frac,
+        max_band_frac=cfg.max_band_frac,
+        min_band_pixels=cfg.min_band_pixels,
+        min_confidence=cfg.min_confidence,
+    )
+
+
 def _pace(tick_start: float, dt: float) -> None:
     """Sleep so one tick costs about dt of wall time (dashboard viewing only)."""
     remaining = dt - (time.perf_counter() - tick_start)
@@ -111,6 +158,9 @@ def run_sim(
     overlay_path: str | None = None,
     record: bool = True,
     bridge: Bridge | None = None,
+    dashboard: DashboardBridge | None = None,
+    profile_hook: Callable[[str], str] | None = None,
+    record_hook: Callable[[bool, str], None] | None = None,
     realtime: bool = False,
     tracker: CrossLineTracker | None = None,
 ) -> SimResult:
@@ -120,8 +170,10 @@ def run_sim(
     bridge: viewer that receives a SimState + frame per tick and can push controls.
     realtime: pace the loop to ~dt of wall time per tick, for watching.
     tracker: optional cross-line tracker; its events feed the state machine
-        (checkpoint counted, finish ends the run). Without it the run is
-        bit-identical to the pre-tracker behaviour.
+        (checkpoint counted, finish ends the run). When the scenario renders
+        cross-lines and no tracker is given, one is created automatically with
+        hue bands derived from the rendered colours. Scenarios without
+        cross-lines never create one, so their runs stay bit-identical.
     """
     if isinstance(scenario, str):
         scenario = get_scenario(scenario)
@@ -129,8 +181,11 @@ def run_sim(
     det = detector or _default_detector(cfg)
     pol = policy or LanePolicy(policy_cfg)
     view = bridge if bridge is not None else NullBridge()
+    dash = dashboard if dashboard is not None else DashboardNullBridge()
 
     sm = RobotStateMachine()
+    violations = 0
+    pending_violation = False
     buttons = QueueButtons()
     sim_time = [0.0]
     cell: dict = {"world": None, "res": None, "lane": [], "trail": [],
@@ -143,11 +198,21 @@ def run_sim(
             path = LanePath.from_points(np.asarray(sc.points, dtype=np.float64))
         else:
             path = build_path(sc.segments, sc.start_offset_m)
-        cell["world"] = SimWorld(path, cfg)
+        cell["world"] = SimWorld(path, cfg, cross_lines=sc.cross_lines)
         cell["res"] = SimResult(scenario=sc.name)
         sm.new_attempt()
-        if tracker is not None:
-            tracker.reset()
+        if tracker is None and sc.cross_lines:
+            # The scenario renders cross-lines and the caller passed no tracker:
+            # create one whose hue bands match the rendered colours, so a
+            # closed-loop run exercises the same config-driven path the real
+            # robot uses (configs/ instead of this derivation there).
+            cell["tracker"] = CrossLineTracker(
+                CrossLineDetector(_sim_checkpoint_cfg(sc))
+            )
+        else:
+            cell["tracker"] = tracker
+        if cell["tracker"] is not None:
+            cell["tracker"].reset()
         sim_time[0] = 0.0
         w = cell["world"]
         cell["lane"] = _lane_points(w)
@@ -193,12 +258,12 @@ def run_sim(
             res.departures += int(abs(meas.offset_m) > DEPARTURE_M)
             res.max_abs_offset = max(res.max_abs_offset, abs(meas.offset_m))
             res.mean_abs_offset += abs(meas.offset_m)
-        if tracker is not None and frame is not None:
+        if cell["tracker"] is not None and frame is not None:
             # Cross-line events: a checkpoint is counted, the finish line ends
             # the run. One extra frame of motion after the finish line is
             # accepted (the line is crossed at the bumper; the referee stops
             # the attempt anyway).
-            ev = tracker.update(frame)
+            ev = cell["tracker"].update(frame)
             if ev is not None:
                 if ev.kind == "finish":
                     _sm.finish()
@@ -214,7 +279,7 @@ def run_sim(
             )
         return cmd
 
-    def publish(cmd: Command, fps: float) -> None:
+    def publish(cmd: Command, fps: float, latency_ms: float) -> None:
         res, world = cell["res"], cell["world"]
         h = cfg.size[0]
         look_row = lookahead_row(det.cfg, h)
@@ -284,6 +349,8 @@ def run_sim(
             world = cell["world"]
             if world.crashed or world.finished:
                 break
+            if sm.finished:
+                break  # the finish line ended the run (cross-line tracker)
             cmd = step(sm, camera, buttons, actuator, policy_fn)
             ticks += 1
             cell["trail"].append([world.x, world.y, world.theta])
@@ -294,10 +361,11 @@ def run_sim(
                 _draw_overlay(last["frame"], last["meas"], world, det.cfg)
                 writer.write(last["frame"])
             now = time.perf_counter()
+            latency_ms = (now - tick_start) * 1000.0
             instant = 1.0 / max(now - tick_start, 1e-9)
             fps = instant if fps == 0.0 else 0.9 * fps + 0.1 * instant
             tick_start = now
-            publish(cmd, fps)
+            publish(cmd, fps, latency_ms)
             if realtime:
                 _pace(tick_start, dt)
     finally:
@@ -310,7 +378,7 @@ def run_sim(
     res.time_s = cell["world"].t
     res.mean_abs_offset /= max(1, res.detected)
     res.crashed = cell["world"].crashed
-    res.finished = cell["world"].finished
+    res.finished = cell["world"].finished or sm.finished
     res.checkpoints = sm.checkpoints
     return res
 
@@ -372,6 +440,8 @@ def _print_result(res: SimResult) -> None:
     print(f"offset   : mean |{res.mean_abs_offset:.3f}| m, max |{res.max_abs_offset:.3f}| m, "
           f"departures (>{DEPARTURE_M} m) {res.departures}")
     print(f"stops    : {res.stop_frames} frames commanded STOP")
+    if res.checkpoints:
+        print(f"checkpoints: {res.checkpoints}")
 
 
 def main(argv: list[str] | None = None) -> int:

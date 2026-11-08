@@ -33,20 +33,33 @@ class VehicleParams:
 
 
 _REQUIRED = ("drive", "wheel_base_mm", "track_width_mm", "max_steer_deg", "max_speed_mps")
+# Only the values the chosen drive actually uses must be measured.
+_NEEDED = {
+    "differential": ("track_width_mm", "max_speed_mps"),
+    "ackermann": ("wheel_base_mm", "max_steer_deg", "max_speed_mps"),
+}
 
 
 def load_vehicle_params(path: str | Path) -> VehicleParams:
-    """Load configs/vehicle.yaml. Refuses to run with unmeasured (null) values."""
+    """Load configs/vehicle.yaml. Refuses to run with unmeasured (null) values that the drive needs."""
     data = yaml.safe_load(Path(path).read_text()) or {}
-    missing = [k for k in _REQUIRED if data.get(k) is None]
+    drive = data.get("drive")
+    if drive not in _NEEDED:
+        missing = [k for k in _REQUIRED if data.get(k) is None]
+        if missing:
+            raise ValueError(f"{path}: measure the robot and fill in: {', '.join(missing)}")
+        raise ValueError(f"{path}: drive must be 'differential' or 'ackermann'")
+    missing = [k for k in _NEEDED[drive] if data.get(k) is None]
     if missing:
         raise ValueError(f"{path}: measure the robot and fill in: {', '.join(missing)}")
-    if data["drive"] not in ("differential", "ackermann"):
-        raise ValueError(f"{path}: drive must be 'differential' or 'ackermann'")
+
+    def val(key: str) -> float:
+        return float(data.get(key) or 0.0)  # unused-by-this-drive values stay 0
+
     return VehicleParams(
-        drive=data["drive"],
-        wheel_base_m=data["wheel_base_mm"] / 1000.0,
-        track_width_m=data["track_width_mm"] / 1000.0,
-        max_steer_rad=math.radians(data["max_steer_deg"]),
-        max_speed_mps=float(data["max_speed_mps"]),
+        drive=drive,
+        wheel_base_m=val("wheel_base_mm") / 1000.0,
+        track_width_m=val("track_width_mm") / 1000.0,
+        max_steer_rad=math.radians(val("max_steer_deg")),
+        max_speed_mps=val("max_speed_mps"),
     )
