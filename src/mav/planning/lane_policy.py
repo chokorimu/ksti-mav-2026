@@ -6,8 +6,10 @@ leaving the track far more than it rewards speed):
     allows (rules: minimum turning radius 1.5 m -> |kappa| <= 1/1.5)
   - speed: scales down with the commanded curvature AND the curvature measured
     ahead, and with detection confidence
-  - lost lane (no measurement / low confidence / implausible offset): STOP by
-    default. Safe by default; `on_lost="hold"` keeps the last command instead.
+  - lost lane (no measurement / low confidence / implausible offset): HOLD the
+    last command by default, so one lost frame cannot freeze the robot into a
+    permanent stop (a frozen pose keeps producing the same lost frame). Set
+    `on_lost="stop"` for the conservative behaviour used before 8 Nov 2026.
 
 This is a v1 placeholder policy: it has no heading term and no checkpoint
 logic. Tune on recordings before trusting it on the track.
@@ -31,7 +33,7 @@ class LanePolicyConfig:
     v_min: float = 0.15             # m/s floor while still tracking
     curv_slow: float = 1.0          # |kappa| at which speed drops to v_min
     conf_min: float = 0.3           # below this the measurement is not trusted
-    on_lost: str = "stop"           # "stop" | "hold"
+    on_lost: str = "hold"           # "stop" | "hold"  hold keeps the last command instead of stopping
 
 
 class LanePolicy:

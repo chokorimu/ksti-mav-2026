@@ -101,7 +101,7 @@ tests/
     startup. Tests: `tests/test_config.py`.
 - `src/mav/perception/lane.py`: LaneDetector (numpy-only), offline runner
     `PYTHONPATH=src python -m mav.perception.lane <video> [--overlay out.mp4]`.
-- `src/mav/planning/lane_policy.py`: LanePolicy (measurement -> Command, pure-pursuit). Both have tests on synthetic frames.
+- `src/mav/planning/lane_policy.py`: LanePolicy (measurement -> Command, pure-pursuit); `on_lost="hold"` default (was `"stop"`) in 8 Nov 2026. Both have tests on synthetic frames.
 - `src/mav/sim/` (synthetic closed-loop simulator, no hardware): `world.py` (exact
     constant-curvature pose integration, lane polyline, camera model with taper),
     `render.py` (shared numpy-only frame renderer, also used by `tests/synthetic_lane.py`),
