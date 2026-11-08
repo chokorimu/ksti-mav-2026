@@ -80,6 +80,22 @@ Candidate fixes (NOT decided — waiting on the user):
 - Policy: the speed law multiplying by confidence turns a detector problem into a
   motion problem — a detector artefact should not be able to stop the robot.
 
+### T2 update 2: the policy deadlock is IN (8 Nov 2026, commit `6f2d8c1`)
+
+The user chose "fix deadlock policy dulu". One line in `src/mav/planning/lane_policy.py`:
+`LanePolicyConfig.on_lost` default `"stop"` → **`"hold"`**.
+
+Why it was a deadlock, not just a conservative stop: the robot is stationary when
+`on_lost="stop"` fires, and a stationary pose keeps producing the same frame, so the
+same lost measurement — the stop is self-sustaining. Measured on the KSTI track:
+1101 of 1200 ticks below 0.1 m/s. With `"hold"` the last good command is kept, so the
+robot keeps rolling through a bad frame and the detector gets a fresh view.
+
+Full suite **211 passed** (laptop). No regression on the synthetic scenarios
+(straight/offset/curve/s_curve unchanged). **Not yet re-measured on the KSTI track** —
+that is the next step, and it needs the closed-loop script in `/tmp/opencode/t2_report.py`
+re-run (or an equivalent) to say whether the robot now gets past s=1.75 m.
+
 ### T2 update: the detector fix is IN (7 Nov 2026, commit `fcccf2a`)
 
 The user chose "detektor dulu". Two changes in `src/mav/perception/lane.py`:
