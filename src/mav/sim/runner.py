@@ -191,6 +191,7 @@ def run_sim(
     cell: dict = {"world": None, "res": None, "lane": [], "trail": [],
                   "lane_width_m": 0.0, "corridor_m": 0.0}
     last: dict = {"frame": None, "meas": None, "debug": {}}
+    last_cmd: Command = STOP  # last command sent; `on_lost="hold"` repeats it while the lane is lost
 
     def load(sc: Scenario) -> None:
         """(Re)build world + metrics. The robot then waits for START (real flow)."""
@@ -242,6 +243,7 @@ def run_sim(
     buttons.push(Event.START)
 
     def policy_fn(frame, _sm):
+        nonlocal last_cmd
         res = cell["res"]
         world = cell["world"]
         meas = None
@@ -269,7 +271,8 @@ def run_sim(
                     _sm.finish()
                 else:
                     _sm.add_checkpoint()
-        cmd = pol.command(meas)
+        cmd = pol.command(meas, last=last_cmd)
+        last_cmd = cmd
         if cmd == STOP:
             res.stop_frames += 1
         if record:
