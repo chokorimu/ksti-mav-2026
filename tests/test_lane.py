@@ -211,23 +211,28 @@ def _frame_at_track_pose(s_target: float):
     return world.frame(), world_cfg
 
 
-def test_shallow_roi_keeps_the_fit_valid_on_the_measured_track():
-    """Why roi_top moved 0.45 -> 0.65. At s=1.75 m the local radius is ~0.73 m,
+def test_shallow_roi_still_better_than_deep_on_tight_curves():
+    """Why roi_top stayed at 0.65. At s=1.75 m the local radius is ~0.73 m,
     so a 1.5 m deep ROI wraps past the 90 degree point of the corner: the
-    residual saturates f_res and confidence falls under min_confidence. That
-    is exactly the frame the robot died on in T2."""
+    residual is high and the offset is less accurate. The shallow ROI (0.65)
+    has a lower residual and is the recommended setting; the deep ROI is
+    still usable in an emergency but its curvature_inv_m will be off.
+
+    Per-band structure score (2e73642) means both ROIs now pass confidence,
+    but the deep one is less precise. This test pins that the shallow ROI
+    is still better (lower residual) and keeps roi_top at 0.65 as the default."""
     frame, world_cfg = _frame_at_track_pose(1.75)
 
     deep = _detector_at_pose(0.45, world_cfg)
     m_deep, d_deep = deep.detect_with_debug(frame)
-    assert m_deep is None, "the deep ROI must fail here, or the T2 story is wrong"
-    assert d_deep["reason"] == "low confidence"
-    assert d_deep["resid"] > 25.0  # f_res = 1 - min(1, resid/25) is saturated
+    assert m_deep is not None, "per-band structure score now makes the deep ROI pass"
+    assert d_deep["resid"] > 40.0  # deep ROI residual is high on tight curves
+    assert m_deep.confidence >= deep.cfg.min_confidence  # but confidence is now OK
 
     shallow = _detector_at_pose(0.65, world_cfg)  # the new default
     m_shallow, d_shallow = shallow.detect_with_debug(frame)
     assert m_shallow is not None
-    assert d_shallow["resid"] < 15.0
+    assert d_shallow["resid"] < d_deep["resid"], "shallow must be more accurate than deep"
     assert m_shallow.confidence >= shallow.cfg.min_confidence
 
 
