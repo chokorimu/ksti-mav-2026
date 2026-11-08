@@ -20,5 +20,26 @@ sim:
   dashboard:
     enabled: false
     host: 127.0.0.1
-    port: 8000
+    port: 8001
     realtime: true
+
+# New cross-profile web dashboard (sim, prototype, final). Starts only when
+# explicitly asked for (--dashboard flag) or enabled: true here.
+# The old sim dashboard stays under sim.dashboard. The final profile never
+# starts any dashboard unless explicitly requested.
+dashboard:
+  enabled: false
+  host: 127.0.0.1
+  port: 8000
+  realtime: true
+# Reference only: the sim runner derives its own LaneConfig from WorldConfig
+# (the synthetic camera's geometry), so this section is never read by a sim
+# run. It documents the shape the real profiles use.
+lane:
+  px_per_m: 130.0
+  bottom_row_m: 0.3
+  roi_top: 0.65
+  max_band_span_m: 0.8
+# No `checkpoint:` section on purpose: the sim's cross-line hue bands come from
+# the colours the scenario renders (mav.sim.runner._sim_checkpoint_cfg), not
+# from config. On the real robot they come from configs/ [A11].

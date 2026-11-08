@@ -198,13 +198,31 @@ def test_boot_validates_both_sections():
     for profile in ("prototype", "final"):
         env = {**os.environ, "PYTHONPATH": str(REPO / "src"), "MAV_PROFILE": profile}
         out = subprocess.run(
-            [sys.executable, "-m", "mav"], env=env, cwd=REPO,
+            [sys.executable, "-m", "mav", "--check"], env=env, cwd=REPO,
             capture_output=True, text=True, timeout=60,
         )
         assert out.returncode == 0, out.stderr
         assert "lane      :" in out.stdout
         assert "checkpoint:" in out.stdout
         assert "px_per_m=130.0" in out.stdout
+
+
+def test_boot_fails_loudly_on_unmeasured_vehicle_params():
+    """The real-robot path must refuse to start while the robot is unmeasured.
+
+    `configs/vehicle.yaml` still has `track_width_mm: null` (Q1), and
+    `load_vehicle_params()` raises on any null. That is the intended behaviour
+    (AGENTS.md rule 2: never guess hardware facts), so boot exits non-zero and
+    names the missing key instead of silently driving an unknown robot.
+    """
+    env = {**os.environ, "PYTHONPATH": str(REPO / "src"), "MAV_PROFILE": "prototype"}
+    out = subprocess.run(
+        [sys.executable, "-m", "mav"], env=env, cwd=REPO,
+        capture_output=True, text=True, timeout=60,
+    )
+    assert out.returncode != 0
+    assert "track_width_mm" in out.stderr
+    assert "measure the robot" in out.stderr
 
 
 def test_boot_fails_loudly_on_a_bad_key(tmp_root):

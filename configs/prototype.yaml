@@ -1,6 +1,27 @@
 profile: prototype
-camera: { source: null }      # csi atau usb, isi setelah kamera dipastikan
-actuator: { type: null }      # isi setelah motor driver dipastikan
+camera: { kind: csi, sensor_id: 0 }        # CSI Raspberry Pi module (docs/hardware.md); usb: { kind: usb, index: 0 }
+actuator: { type: serial, port: /dev/ttyACM0 }   # check with: ls /dev/ttyACM* /dev/ttyUSB*
+robot: { rate_hz: 20.0, max_hold_s: 0.5 }  # max_hold_s: keep the last command this long when the lane is lost, then STOP
+policy: { v_max: 0.3, v_min: 0.15 }        # m/s. Start low, raise after wheels-lifted and floor tests
 model: { path: models/prototype/ }
 debug: { enabled: true }
 network: { enabled: true }
+
+# Perception parameters live here, not in code: the camera mount is not fixed,
+# so a camera move is a config edit. px_per_m / bottom_row_m are UNCALIBRATED
+# guesses - the phone recording in data/recordings/ measures 964-1610 px/m from
+# ITS viewpoint (not the robot camera), which only proves the scale is wrong.
+lane:
+  px_per_m: 130.0             # UNCALIBRATED: pixels per metre at the lookahead row
+  bottom_row_m: 0.3           # UNCALIBRATED: forward distance of the frame's bottom row
+  roi_top: 0.65               # search starts this far down (T2 fix, commit fcccf2a)
+  max_band_span_m: 0.8        # drop bands smeared across the image (tight corners)
+
+# Cross-line colours [A11]: the rules forbid hardcoding the checkpoint or
+# start/finish colour without confirmation, so the hue bands are parameters.
+# The defaults follow the guidebook text (checkpoints green) and stay
+# UNCONFIRMED until they are read off the arena on test day. The finish band is
+# disabled (empty list) until then: a red line must NOT be reported by default.
+checkpoint:
+  checkpoint_hues: [[90.0, 150.0]]   # green, per guidebook - UNCONFIRMED [A11]
+  finish_hues: []                    # [A11] unknown colour: disabled

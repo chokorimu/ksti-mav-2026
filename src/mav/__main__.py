@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 
 import yaml
@@ -19,6 +20,12 @@ def main() -> None:
         from mav.sim.runner import main as sim_main
 
         raise SystemExit(sim_main())
+
+    if profile in ("prototype", "final") and "--check" not in sys.argv[1:]:
+        # Real robot: camera -> detector -> policy -> serial -> Arduino. `--check` keeps the old behaviour.
+        from mav.robot import main as robot_main
+
+        raise SystemExit(robot_main())
 
     path = _repo_root() / "configs" / f"{profile}.yaml"
     cfg = yaml.safe_load(path.read_text())

@@ -1,6 +1,8 @@
 # Measure the real robot and fill in. null = not measured yet; load_vehicle_params() refuses to run.
-drive: null            # "differential" (prototype: 4 driven wheels) or "ackermann" (final: servo steering)
-wheel_base_mm: null    # front axle center to rear axle center
-track_width_mm: null   # left wheel center to right wheel center, same axle
-max_steer_deg: null    # servo steering limit at the wheels (ignored by differential)
-max_speed_mps: null    # start low and raise after testing
+# Only the values the chosen drive uses must be filled: differential needs track_width_mm + max_speed_mps;
+# ackermann needs wheel_base_mm + max_steer_deg + max_speed_mps.
+drive: differential    # "differential" (prototype: 4 driven wheels) or "ackermann" (final: servo steering)
+wheel_base_mm: null    # front axle center to rear axle center (final only)
+track_width_mm: null   # left wheel center to right wheel center: MEASURE with a ruler
+max_steer_deg: null    # servo steering limit at the wheels (final only)
+max_speed_mps: 0.3     # safety ceiling, not a measurement. Start low and raise after testing

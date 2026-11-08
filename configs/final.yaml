@@ -4,3 +4,20 @@ actuator: { type: null }
 model: { path: models/final/ }
 debug: { enabled: false }
 network: { enabled: false }   # lomba: tidak ada komunikasi ke robot
+
+# Perception parameters: camera mount is not fixed, so a camera move is a
+# config edit here, never a code edit. These defaults are UNCALIBRATED guesses.
+lane:
+  px_per_m: 130.0
+  bottom_row_m: 0.3
+  roi_top: 0.65
+  max_band_span_m: 0.8
+
+# Cross-line colours [A11]: the rules forbid hardcoding the checkpoint or
+# start/finish colour without confirmation, so the hue bands are parameters.
+# The defaults follow the guidebook text (checkpoints green) and stay
+# UNCONFIRMED until they are read off the arena on test day. Finish is disabled
+# (empty list) until then; a red line must NOT be reported by default.
+checkpoint:
+  checkpoint_hues: [[90.0, 150.0]]   # green, per guidebook - UNCONFIRMED [A11]
+  finish_hues: []                    # [A11] unknown colour: disabled
