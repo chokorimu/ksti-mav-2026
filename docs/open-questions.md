@@ -32,8 +32,12 @@ No longer blocking: see the camera bring-up commands in docs/hardware.md.
 ## Q3 — Rear drivetrain [ANSWERED 7 Nov 2026]
 The single rear motor drives both rear wheels through a mechanical differential.
 
-## Q4 — Steering linkage [OPEN]
-Is the steering linkage true Ackermann geometry? (Affects the Ackermann bonus, rule A1.)
+## Q4 — Steering linkage [ANSWERED 8 Nov 2026 — prototype]
+**Prototype pakai differential (skid) steering**, final pakai **Ackermann** (servo on the
+steering axle). Sudah sesuai desain: `DifferentialMapper` (prototype) dan `AckermannMapper`
+(final) di `src/mav/control/mapping.py`, dipilih lewat `configs/vehicle.yaml` `drive:`.
+Catatan: rule 5.1 mewajibkan steering axle untuk lomba, jadi `prototype` hanya untuk
+pengembangan — bonus Ackermann [A1] hanya berlaku untuk `final`. Tidak lagi memblokir apa pun.
 
 ## Q5 — Simulator [CLOSED 7 Nov 2026]
 No external web simulator is used. Replaced by the in-repo **web dashboard for the
