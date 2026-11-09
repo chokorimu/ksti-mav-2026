@@ -301,12 +301,27 @@ camera, because `px_per_m` belongs to the camera mount. The runner can write one
 
 ```bash
 scripts/run.sh prototype --dry-run --record data/recordings/lane.mp4
-# press `s` + Enter, push the robot slowly along a real 0.50 m lane,
-# then Ctrl+C
+# place the robot ON the lane and DO NOT TOUCH IT (see below), press `s` + Enter,
+# wait ~5 s, then Ctrl+C
 PYTHONPATH=src python -m mav.tools.calibrate_scale data/recordings/lane.mp4
 ```
 
-`--dry-run` keeps the motors dead, so the robot can be pushed by hand and the clip
+**The robot must be STILL for this clip.** `px_per_m` is a property of the camera
+mount (height and pitch), so it only has a value while the mount is still. Pushing
+the robot along the lane is the right way to record material for the *detector*,
+and it is wrong here: on the first real clip the mount moved 6 px/frame with a net
+drift of 1220 px, so the lane's apparent width changed for reasons that have
+nothing to do with the geometry. `calibrate_scale` now measures this and refuses.
+
+The camera must also SEE both lane edges at the row where the robot measures
+(`lane.lookahead_row`). A low, steeply pitched camera cannot: a 0.50 m lane seen
+0.4-0.5 m ahead is wider than a 640 px frame, so the edges fall outside the
+picture. On the first real clip, 38% of frames had nothing painted at that row and
+42% had exactly one marking. Raise the camera or pitch it further ahead until both
+edges are inside the frame where the robot already looks; `calibrate_scale` prints
+a row-by-row scan showing which rows are usable and which are not.
+
+`--dry-run` keeps the motors dead, so the robot can be placed by hand and the clip
 is safe to take. Frames are only written while RUN, which is why `s` is needed -
 `app.step` reads the camera only in that state.
 

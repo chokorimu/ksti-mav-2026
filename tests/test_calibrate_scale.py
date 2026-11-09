@@ -508,3 +508,124 @@ def test_the_row_scan_does_recommend_a_real_edge_pair(capsys, monkeypatch):
     assert "lookahead_frac" in out, out
     frac = re.search(r"lookahead_frac: ([0-9.]+)", out)
     assert frac and 0.0 <= float(frac.group(1)) <= 1.0, f"fraction out of range:\n{out}"
+
+
+# ------------------------------------------------ the camera must be STILL ----
+def test_camera_motion_is_detected(monkeypatch):
+    """A moving mount cannot calibrate px_per_m: it is a property of the mount.
+
+    The tool's own `--record` procedure said "push the robot along the lane",
+    which is right for recording DETECTOR test material and wrong for a SCALE
+    calibration. The first real clip moved 6 px/frame with a net drift of
+    1220 px, so the lane's apparent width changed for reasons that have nothing
+    to do with the camera geometry - and no single px_per_m describes it.
+    """
+    from mav.tools import calibrate_scale as cs
+
+    frames = []
+    base = np.zeros((180, 320, 3), dtype=np.uint8)
+    base[40:60, 40:80] = 255
+    base[100:130, 200:260] = 255
+    for i in range(12):
+        frames.append(np.roll(base, i * 7, axis=0))   # 7 px/frame: clearly moving
+
+    class Cam:
+        def __init__(self):
+            self.i = 0
+
+        def read(self):
+            self.i += 1
+            return frames[self.i - 1] if self.i <= len(frames) else None
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(cs, "open_video", lambda _p: Cam())
+    got = cs._camera_motion("clip.mp4")
+    assert got is not None
+    med, share, _net = got
+    assert med > 3.0, f"median shift should be about 7 px, got {med}"
+    assert share > 0.5, f"most frames move, got {share:.0%}"
+
+
+def test_a_still_clip_is_not_accused_of_moving(monkeypatch):
+    """The check must not fire on a still clip, or every recording is refused."""
+    from mav.tools import calibrate_scale as cs
+
+    base = np.zeros((180, 320, 3), dtype=np.uint8)
+    base[40:60, 40:80] = 255
+    base[100:130, 200:260] = 255
+
+    class Cam:
+        def __init__(self):
+            self.i = 0
+
+        def read(self):
+            self.i += 1
+            return base.copy() if self.i <= 12 else None
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(cs, "open_video", lambda _p: Cam())
+    assert cs._explain_camera_motion("clip.mp4") is False
+
+
+def test_motion_message_says_to_record_with_the_robot_still(capsys, monkeypatch):
+    from mav.tools import calibrate_scale as cs
+
+    frames = []
+    base = np.zeros((180, 320, 3), dtype=np.uint8)
+    base[40:60, 40:80] = 255
+    base[100:130, 200:260] = 255
+    for i in range(12):
+        frames.append(np.roll(base, i * 7, axis=0))
+
+    class Cam:
+        def __init__(self):
+            self.i = 0
+
+        def read(self):
+            self.i += 1
+            return frames[self.i - 1] if self.i <= len(frames) else None
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(cs, "open_video", lambda _p: Cam())
+    assert cs._explain_camera_motion("clip.mp4") is True
+    out = capsys.readouterr().out
+    assert "STANDING STILL" in out, out
+    assert "MOUNT" in out, "it must explain WHY stillness matters"
+
+
+def test_a_cut_off_marking_invalidates_a_row(capsys, monkeypatch):
+    """A marking touching the frame border means the lane is wider than the frame.
+
+    This is direct evidence, unlike inferring it from a scattered width: if the
+    pair is cut off, the distance measured is to the CUT edge, not the real one,
+    so the span is a lower bound and px_per_m would come out too small.
+    """
+    from mav.tools import calibrate_scale as cs
+
+    frame = np.zeros((360, 640, 3), dtype=np.uint8)
+    frame[:, 0:40] = 255        # left marking CUT by the frame border
+    frame[:, 560:590] = 255     # right marking, fully visible
+
+    class Cam:
+        def __init__(self):
+            self.i = 0
+
+        def read(self):
+            self.i += 1
+            return frame if self.i <= 20 else None
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(cs, "open_video", lambda _p: Cam())
+    cs._scan_rows_for_a_usable_lane(_StubDetector(_cfg(), (None, {})), "clip.mp4")
+    out = capsys.readouterr().out
+    assert "TOUCHES the frame border" in out, out
+    assert "always present" not in out, (
+        f"a cut-off pair must never be called a usable lane width:\n{out}")

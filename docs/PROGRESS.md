@@ -566,17 +566,29 @@ turning radius). Confidence never drops below 0.30, so the frames are not being
 rejected as low-confidence - they are confidently wrong. Fixing `px_per_m`
 alone would NOT fix this.
 
-**What to do instead** - the camera geometry, not the clip:
-- raise the camera or pitch it further ahead, so both edges fit in the frame at
-  the lookahead row; or
-- record on the actual 0.50 m competition lane rather than a road, where the
-  markings are at the lane edges and both are in view;
-- or measure `px_per_m` directly: put two marks exactly 0.50 m apart on the
-  floor at the lookahead distance and read their pixel separation off one frame.
+**What to do instead** - the camera geometry and a STILL robot, not the clip:
+- **Record with the robot STATIONARY.** This is a correction to the procedure
+  written earlier: "push the robot slowly along the lane" is right for recording
+  DETECTOR material and wrong for a scale calibration, because `px_per_m` is a
+  property of the mount. Measured on this clip: 6.0 px/frame median motion, 55%
+  of frames moving >5 px, net drift +1220 px. The mount was never still, so the
+  quantity being measured was changing the whole time. `calibrate_scale` now
+  detects this (OpenCV phase correlation) and says so first.
+- **Make both edges visible where the robot measures**: raise the camera, or
+  pitch it further ahead, so a 0.50 m lane fits inside 640 px at the lookahead
+  row. With a low, steeply pitched mount it cannot: at ~0.4 m ahead the lane is
+  wider than the frame.
+- The row scan in `calibrate_scale` prints every row with two markings, its
+  spread, whether a marking TOUCHES the frame border (a cut-off pair makes the
+  span a lower bound, so `px_per_m` would come out too small), and whether the
+  marking is present in >=80% of frames (an edge line is; a dash is not).
+  On this clip no row passes all three.
 
-Do NOT paste a value derived from a row that cannot see the lane.
+Do NOT paste a value derived from a row that cannot see the lane. The tool
+refuses, and that refusal is the feature: `px_per_m` feeds every offset, the
+swerve decision and the cone lateral position.
 
-Tests: 361 passed (was 352).
+Tests: 365 passed (was 352).
 
 ## Next tasks (in order)
 

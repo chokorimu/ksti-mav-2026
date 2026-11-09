@@ -348,6 +348,7 @@ def _scan_rows_for_a_usable_lane(detector: LaneDetector, video_path: str) -> Non
     except RuntimeError:
         return
     per_row: dict[int, list[float]] = {}
+    per_row_clipped: dict[int, int] = {}
     frame_h = frame_w = 0
     frames = 0
     step = 10
@@ -364,6 +365,12 @@ def _scan_rows_for_a_usable_lane(detector: LaneDetector, video_path: str) -> Non
                 runs = _runs_in_gray_row(g[y])
                 if len(runs) == 2:
                     per_row.setdefault(y, []).append(float(runs[1][1] - runs[0][0]))
+                    # A marking touching x=0 or x=w-1 is CUT OFF by the frame, so
+                    # the distance to it is not the distance to its far edge. This
+                    # is the direct evidence that the lane is wider than the
+                    # picture, which beats inferring it from a scattered width.
+                    if runs[0][0] <= 1 or runs[-1][1] >= frame_w - 1:
+                        per_row_clipped[y] = per_row_clipped.get(y, 0) + 1
     finally:
         cam.close()
     if not frames:
@@ -380,6 +387,8 @@ def _scan_rows_for_a_usable_lane(detector: LaneDetector, video_path: str) -> Non
             continue
         p25, p50, p75 = (float(np.percentile(spans, q)) for q in (25, 50, 75))
         spread = p75 / max(1.0, p25)
+        clipped = per_row_clipped.get(y, 0)
+        cut_off = clipped > 0.25 * spans.size
         note = ""
         # A lane EDGE is painted along the whole track, so it is in nearly every
         # frame. A dashed centre line is not. That is the discriminator: on the
@@ -388,7 +397,11 @@ def _scan_rows_for_a_usable_lane(detector: LaneDetector, video_path: str) -> Non
         # was dash-to-edge, and 331 px would have implied a plausible, wrong
         # px_per_m of 662. Stability alone is not enough; presence is what tells
         # an edge line from a dash.
-        if spread <= 1.25 and presence >= 0.80:
+        if cut_off:
+            note = (f"  in {clipped} of those {spans.size} frames a marking TOUCHES "
+                    f"the frame border, so the pair is cut off and this span is a "
+                    f"lower bound - the lane is wider than the picture here")
+        elif spread <= 1.25 and presence >= 0.80:
             usable.append((y, p50, spans.size))
             note = "  <-- stable and always present: a lane width can be measured here"
         elif spread <= 1.25:
@@ -434,6 +447,75 @@ def _scan_rows_for_a_usable_lane(detector: LaneDetector, video_path: str) -> Non
         print("  the robot measures it (rules §6), not just where it is painted.")
 
 
+def _camera_motion(video_path: str) -> tuple[float, float, float] | None:
+    """(median px/frame, share of frames >5 px, net drift) or None.
+
+    `px_per_m` is a property of the camera MOUNT - its height and pitch. If the
+    camera moves while recording, the quantity being measured changes from frame
+    to frame, and no single value can describe the clip. This is not a subtle
+    effect: pushing the robot along the lane (which is the right way to record
+    DETECTOR test material) swings the mount, and that invalidates the clip for
+    a SCALE calibration.
+
+    Measured with OpenCV's phase correlation, which is what actually detects it:
+    a first attempt using a numpy row-brightness profile reported a median of
+    0.0 px/frame on a clip that phase correlation shows moving 6 px/frame. The
+    profile fingerprint is too insensitive because markings sit at similar rows
+    even as the whole scene slides.
+    """
+    import cv2
+
+    try:
+        cam = open_video(video_path)
+    except RuntimeError:
+        return None
+    prev = None
+    shifts: list[float] = []
+    dys: list[float] = []
+    try:
+        while True:
+            frame = cam.read()
+            if frame is None:
+                break
+            g = cv2.cvtColor(np.asarray(frame), cv2.COLOR_BGR2GRAY).astype(np.float32)
+            if prev is not None:
+                win = cv2.createHanningWindow((g.shape[1], g.shape[0]), cv2.CV_32F)
+                (dx, dy), _resp = cv2.phaseCorrelate(prev, g, win)
+                shifts.append(float(np.hypot(dx, dy)))
+                dys.append(float(dy))
+            prev = g
+    finally:
+        cam.close()
+    if len(shifts) < 4:
+        return None
+    arr = np.array(shifts, dtype=float)
+    return (float(np.median(arr)), float((arr > 5.0).mean()), float(np.sum(dys)))
+
+
+def _explain_camera_motion(video_path: str) -> bool:
+    """Print the motion finding; True when the clip is too unstable to calibrate."""
+    got = _camera_motion(video_path)
+    if got is None:
+        return False
+    med, share, net = got
+    if share < 0.30:
+        return False
+    print(f"The CAMERA MOVED during this clip: median {med:.1f} px/frame, "
+          f"{share:.0%} of frames move more than 5 px, net drift {net:+.0f} px.")
+    print()
+    print("`px_per_m` is a property of the camera MOUNT (height and pitch), so it")
+    print("only has a value while the mount is still. Pushing the robot along the")
+    print("lane is the right way to record DETECTOR test material, but it swings")
+    print("the camera, which changes the very quantity being measured here.")
+    print()
+    print("Record the scale clip with the robot STANDING STILL on the lane:")
+    print("  - place it where the markings are representative,")
+    print("  - do not touch or push it,")
+    print("  - a few seconds is enough (5-10 frames).")
+    print()
+    return True
+
+
 def calibrate(video_path: str, *, lane_m: float = 0.50, profile: str | None = None) -> int:
     name = profile_name(profile)
     try:
@@ -472,6 +554,8 @@ def calibrate(video_path: str, *, lane_m: float = 0.50, profile: str | None = No
             f"only {len(spans)} usable frames out of {frames}: the detector is not "
             "seeing BOTH edge lines at the lookahead row.\n"
         )
+        _explain_camera_motion(video_path)
+        print()
         _explain_lookahead_evidence(detector, video_path)
         print()
         _scan_rows_for_a_usable_lane(detector, video_path)
@@ -508,6 +592,11 @@ def calibrate(video_path: str, *, lane_m: float = 0.50, profile: str | None = No
     if _rel_spread(group) > 1.25 or support <= 0.50 or not clear_winner:
         print()
         print("REFUSING to report a value.")
+        print()
+        # Both causes are reported, not just the first: they are independent
+        # (the mount can be moving AND the lane can be too wide for the frame),
+        # and fixing one while the other remains produces another refused clip.
+        _explain_camera_motion(video_path)
         print()
         _explain_lookahead_evidence(detector, video_path)
         print()
