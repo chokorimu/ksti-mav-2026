@@ -50,3 +50,17 @@ and the robot side needed no adapter at all because the sim already runs the rea
 ## Q6 — Organizer answers (rules) [OPEN]
 A1 (differential), A5 (extra sensors), A11 (start/finish and checkpoint colors),
 plus checkpoint count and track map.
+
+## Q7 — Record one clip with the ROBOT camera to calibrate px_per_m [NOT ASKED YET]
+`px_per_m` is still the uncalibrated guess 130, and it is the constant that turns
+every pixel into a metre (offsets, cone distance, the swerve decision). It cannot be
+measured from a phone clip: `px_per_m` belongs to the camera MOUNT (height + pitch),
+and the phone clip we have also shows two different surfaces and a moving camera
+(measured: only 26% of usable frames agree on a lane width). See PROGRESS.md,
+"px_per_m calibration attempt".
+Needed from you: mount the CSI camera at its competition position, drive it over a
+real 0.50 m lane, save the clip, and run
+  PYTHONPATH=src python -m mav.tools.calibrate_scale <clip>
+The tool refuses until the clip has a clear majority width, which is the point - a
+wrong scale silently mis-scales every offset instead of failing loudly.
+Blocks: usable lane offsets, cone distance and the ARC swerve decision on real video.
