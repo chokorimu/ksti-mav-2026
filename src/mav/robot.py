@@ -286,7 +286,8 @@ def main(argv: list[str] | None = None) -> int:
     ser = _LinePort() if args.dry_run else _open_serial_or_exit(port_name)
     if not args.dry_run:
         time.sleep(_BOARD_RESET_S)
-    actuator = SafeActuator(SerialActuator(mapper, ser), max_speed_mps=params.max_speed_mps, timeout_s=0.3)
+    serial_act = SerialActuator(mapper, ser)
+    actuator = SafeActuator(serial_act, max_speed_mps=params.max_speed_mps, timeout_s=0.3)
 
     driver = Driver(detector, policy, tracker, max_hold_s, cones=cones,
                     avoid_cfg=avoid_cfg, cone_tracker=cone_tracker)
@@ -330,7 +331,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"{sm.state.value:10s} cp={sm.checkpoints} lost={int(driver.lost)} off={off} "
                       f"cmd=({driver.last.speed:.2f},{driver.last.curvature:+.2f}) "
                       f"avo={driver.avoid.get('action', '-')} "
-                      f"line={ser.last if args.dry_run else '-'} {ms:.0f}ms")
+                      f"line={ser.last if args.dry_run else (serial_act.last_line or '-')} {ms:.0f}ms")
             time.sleep(max(0.0, period - (time.perf_counter() - t0)))
     except KeyboardInterrupt:
         print("\nstopping")

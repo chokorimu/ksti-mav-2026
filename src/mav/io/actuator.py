@@ -65,6 +65,10 @@ class SerialActuator:
     def __init__(self, mapper, port) -> None:
         self._mapper = mapper
         self._port = port
+        # The last line written. The status line used to print "-" whenever a real
+        # port was in use, i.e. exactly when seeing the command matters: without it
+        # there is no way to tell "the policy said stop" from "the write failed".
+        self.last_line = ""
 
     def set(self, cmd: Command) -> None:
         out = self._mapper.map(cmd)
@@ -75,9 +79,11 @@ class SerialActuator:
         else:
             raise TypeError(f"unsupported mapper output: {type(out).__name__}")
         self._port.write(line.encode("ascii"))
+        self.last_line = line.strip()
 
     def stop(self) -> None:
         self._port.write(b"S\n")
+        self.last_line = "S"
 
 
 class SerialUnavailable(RuntimeError):

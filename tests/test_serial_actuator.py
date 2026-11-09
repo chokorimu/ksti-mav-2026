@@ -382,3 +382,21 @@ def test_results_are_deduplicated(monkeypatch):
     monkeypatch.setattr(A, "_dev_nodes", lambda *a, **k: ["/dev/ttyUSB0"])
 
     assert A.list_serial_ports() == ["/dev/ttyUSB0"]
+
+
+def test_serial_actuator_remembers_the_last_line_written():
+    """The status line must show what was sent, not "-", once a real port is in use.
+
+    `line=-` whenever a real serial port was open meant the operator could not tell
+    "the policy commanded stop" from "the command never reached the board" - which
+    is exactly the question asked while debugging a robot that will not move.
+    """
+    port = FakePort()
+    act = diff_actuator(port)
+    assert act.last_line == "", "nothing sent yet"
+
+    act.set(Command(0.25, 0.0))
+    assert act.last_line == "W 0.250 0.250"
+
+    act.stop()
+    assert act.last_line == "S", "a stop must be visible too"
