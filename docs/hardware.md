@@ -113,34 +113,55 @@ $ ls /dev/ttyACM* /dev/ttyUSB*
 (nothing)
 ```
 
-So the chip enumerates on USB and the **driver does not bind**. It is not a cable,
-not a permission problem (the user is in `dialout`), and not the camera.
+**It is NOT a missing kernel module.** Verified on this Jetson (kernel
+`5.15.185-tegra`): `ch341.ko` is present in
+`/lib/modules/$(uname -r)/kernel/drivers/usb/serial/` and `lsmod` shows
+`ch341 28672 0`. An earlier note here claimed the module was absent on L4T R36;
+that was wrong and is corrected here. The `0` refcount is the clue: the module is
+loaded but **nothing is bound to it**.
 
-**Cause.** L4T R36 (JetPack 6) does not ship the `ch341` kernel module, which is
-what drives the CH340. `sudo modprobe ch341` answers
-`FATAL: Module ch341 not found in directory /lib/modules/<version>-tegra`. This is a
-known gap in the JetPack 6 image, not a fault on this robot.
+**The cause is `brltty`.** Ubuntu 22.04 (the JetPack 6 base) ships `brltty`, the
+braille-display daemon, whose udev rule matches `1a86:7523` - the CH340 - because
+some braille displays use that chip. It claims the device, then drops it, so the
+kernel creates `/dev/ttyUSB0` and immediately removes it. The signature in
+`dmesg` is exactly that pair of lines:
 
-**Options, cheapest first.**
+```
+ch341-uart converter now attached to ttyUSB0
+ch341-uart disconnected from ttyUSB0
+```
 
-1. **Use a CP2102 or FTDI adapter** (a USB-serial cable with a different chip) and
-   wire it to the Nano's TX/RX, or use a Nano with that bridge. `cp210x` and
-   `ftdi_sio` are commonly present in L4T already - check with
-   `ls /lib/modules/$(uname -r)/kernel/drivers/usb/serial/`. No kernel work, works
-   immediately. Note the Nano still needs its own USB power in this arrangement.
-2. **Build the `ch341` module** against the running kernel:
-   `sudo apt install nvidia-l4t-kernel-headers`, then build
-   `drivers/usb/serial/ch341.c` from the matching kernel source. Expect friction:
-   L4T images frequently lack `Module.symvers`, and the build then fails at modpost
-   with `"usb_register_driver" undefined`. If that happens, the module cannot be
-   linked and option 1 is the answer.
-3. **Prebuilt third-party modules** (e.g. the JetsonHacks `installCH341` script).
-   These are built for one exact kernel version and fail with `Exec format error`
-   on any other. Verify `uname -r` matches before trusting one.
+This affects any CH340/CH341 adapter on Ubuntu 22.04, not just this robot, and it
+is the number one reason an Arduino clone "disappears" on that release.
 
-**Do not** spend a competition week on this. A different USB-serial chip costs a few
-dollars and removes the problem entirely; the module build is a kernel-maintenance
-task with a real chance of not linking at all.
+**Fix - confirm first, then remove:**
+```bash
+dpkg -l | grep brltty                 # is it installed?
+lsusb -t                              # which driver is actually bound?
+sudo dmesg | grep -i ch34             # attached-then-disconnected?
+```
+
+If `brltty` is present, remove it. It is only needed for a braille e-reader,
+which this robot does not have:
+```bash
+sudo apt remove brltty
+# then unplug and replug the Nano
+ls /dev/ttyUSB*                       # should now exist
+```
+The less invasive alternative is to mask the daemon and keep the package:
+```bash
+sudo systemctl mask brltty.service brltty-udev.service
+```
+Masking is enough in most reports, but removal is the option that stops the udev
+rule from firing at all, so try that first if masking leaves the device flapping.
+
+**What is NOT the cause** (all checked): the `ch341` module (present and loaded),
+permissions (the user is in `dialout`), and the cable (`lsusb` sees the chip).
+
+**Only if `ch341` were genuinely absent** (it is not, here): a different
+USB-serial chip (`cp210x`/`ftdi_sio` are also present on this image) is far cheaper
+than building the module, because L4T images usually lack `Module.symvers` and the
+build then fails at modpost with `"usb_register_driver" undefined`.
 
 ## Startup troubleshooting on the Jetson
 
