@@ -4,6 +4,7 @@ from types import SimpleNamespace as NS
 import pytest
 
 from mav.perception.obstacle import Obstacle
+from mav.planning.avoid import AvoidConfig
 from mav.robot import Driver
 from mav.types import STOP, Command
 
@@ -76,9 +77,22 @@ def cone(lateral_m, distance_m=0.8):
                     width_frac=0.04, height_frac=0.1, pixels=200)
 
 
-def make(max_hold_s=0.5, tracker=None, cones=None):
+class ConeTracker:
+    """Stub for ConePassTracker: emits an event on the frames listed in `events`."""
+
+    def __init__(self, events):
+        self.events = events
+        self.calls = 0
+
+    def update(self, frame):
+        self.calls += 1
+        return self.events.pop(0) if self.events else None
+
+
+def make(max_hold_s=0.5, tracker=None, cones=None, cone_tracker=None):
     det, clock = Detector(), Clock()
-    return det, clock, Driver(det, Policy(), tracker, max_hold_s, clock, cones=cones)
+    return det, clock, Driver(det, Policy(), tracker, max_hold_s, clock, cones=cones,
+                              cone_tracker=cone_tracker)
 
 
 def test_tracks_when_lane_is_seen():
@@ -143,9 +157,12 @@ def test_cone_ahead_shifts_the_aim_point_not_the_measurement():
     det, _, d = make(cones=Cones([cone(0.05)]))
     det.meas = good(0.0)
     cmd = d("f", SM())
-    # Cone slightly right of centre: aim 0.12 m to its left -> -0.07 -> steer left.
-    assert cmd.speed == 0.3 and cmd.curvature == pytest.approx(0.14)
-    assert d.meas.offset_m == 0.0   # the logged measurement stays the real lane offset
+    # Cone slightly right of centre: aim CLEARANCE to its left -> -0.11 m -> left.
+    # The fake policy is curvature = -2 * offset, so 0.11 -> 0.22.
+    target = 0.05 - AvoidConfig().clearance_m
+    assert cmd.speed == 0.3 and cmd.curvature == pytest.approx(-2.0 * target)
+    assert cmd.curvature > 0.0            # positive curvature = left turn
+    assert d.meas.offset_m == 0.0         # the logged measurement stays the real lane offset
     assert d.avoid["action"] == "swerve"
 
 
@@ -162,3 +179,45 @@ def test_avoidance_cannot_mask_a_lost_lane():
     det.meas = good(0.9)
     d("f", SM())
     assert d.lost
+
+
+# ---------------------------------------------------------------- ARC score ----
+def test_passing_a_cone_counts_as_a_checkpoint():
+    # ARC §8: "Avoiding an obstacle counts as passing the checkpoint", so `cp`
+    # is the number of cones passed - the biggest term in the score.
+    det, _, d = make(cone_tracker=ConeTracker(["passed"]))
+    det.meas = good(0.0)
+    sm = SM()
+    d("f", sm)
+    assert sm.cp == 1
+
+
+def test_a_frame_without_a_pass_counts_nothing():
+    det, _, d = make(cone_tracker=ConeTracker([]))
+    det.meas = good(0.0)
+    sm = SM()
+    for _ in range(3):
+        d("f", sm)
+    assert sm.cp == 0
+
+
+def test_cones_are_not_counted_while_the_robot_is_stopped():
+    # The REAL state machine gates on RUN, so a cone drifting past while stopped
+    # (or while a human carries the robot back to a checkpoint) cannot inflate
+    # the score. Uses the real class because that gate is its behaviour.
+    from mav.control.state_machine import RobotStateMachine
+
+    det, _, d = make(cone_tracker=ConeTracker(["passed"]))
+    det.meas = good(0.0)
+    sm = RobotStateMachine()
+    sm.boot_done()
+    d("f", sm)                      # WAIT_START, not RUN
+    assert sm.checkpoints == 0
+
+
+def test_no_cone_tracker_means_no_counting():
+    det, _, d = make()
+    det.meas = good(0.0)
+    sm = SM()
+    d("f", sm)
+    assert sm.cp == 0

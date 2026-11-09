@@ -23,10 +23,41 @@ from mav.perception.obstacle import Obstacle
 
 @dataclass(frozen=True)
 class AvoidConfig:
-    """Geometry of the gap a cone leaves. All metres, offsets +right."""
+    """Geometry of the gap a cone leaves. All metres, offsets +right.
 
-    clearance_m: float = 0.12   # lateral gap wanted between cone centre and car centre
-    max_offset_m: float = 0.15  # never aim further than this from the lane centre
+    `clearance_m` is centre-to-centre, because that is the only thing the camera
+    can estimate: the car's half-width (0.10 m) plus the cone's own radius
+    (unmeasured, ~0.04 m for a small traffic cone) plus a margin. 0.16 m puts the
+    car's corner past the cone instead of clipping it. The first version of this
+    file used 0.12 m and that was WRONG: it would have aimed the car's centre
+    0.12 m from the cone's centre, i.e. 0.02 m from its edge, with a 0.20 m wide
+    car. Clearance has to cover the car's half-width, not just a symbolic gap.
+
+    `max_offset_m` is a RULE number, not a tuning number, so the derivation is
+    written down. Under ARC (rules §8) the car is off track when 50% of its body
+    is outside the edge line; AR is stricter at 30%, and ARC is what we race:
+
+        lane 0.50 m, car body 0.20 m  ->  violation when the centre is
+        0.25 m + 0.10 m = 0.35 m from the lane centre.
+
+    The default stays well inside that on purpose. Hitting a cone costs k=0.5
+    and leaving the track costs k=0.8, so aiming at the exact violation
+    threshold would trade a 0.5 penalty for a 0.8 one on any detection error.
+    0.18 m leaves 0.17 m of margin, and it is the first knob to turn if cones
+    near the lane centre keep being hit.
+
+    Note what these two numbers imply. A side fits when |lateral ± clearance|
+    <= max_offset, so with 0.16 and 0.18 a cone is passable anywhere within
+    |lateral| <= 0.34 m - i.e. effectively anywhere inside the lane. Only a cone
+    beyond that (already outside the track, so not a checkpoint) makes the
+    planner hold its line. What DOES happen for cones near the centre is that the
+    needed offset is close to the budget: a cone at the lane centre wants 0.16 m
+    of the 0.18 m available. That is the intended trade, not a bug.
+    """
+
+    clearance_m: float = 0.16   # car-centre to cone-centre: car half-width + cone radius
+    max_offset_m: float = 0.18  # ARC budget: violation at 0.35, 0.17 m of margin kept
+    max_offset_m: float = 0.18  # ARC budget: violation at 0.35, 0.17 m of margin kept
     horizon_m: float = 1.2      # ignore cones further ahead than this
     enabled: bool = True
 

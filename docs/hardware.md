@@ -22,6 +22,14 @@ Only facts confirmed by the user are in "Confirmed". Everything else is a questi
   software, while the Jetson keeps running so the checkpoint count and the state
   machine survive the stop. A software-only stop is not acceptable — if the Jetson
   hangs, nothing would stop the motors.
+- **Competition scope: ARC (Autonomous Race Challenge), rules §8** (user, 9 Nov 2026).
+  Not AR. Consequences: in the ARC the cones ARE the checkpoints ("avoiding an
+  obstacle counts as passing the checkpoint"), so `cp` is the number of cones passed
+  and `ConePassTracker` is what produces the score; hitting a cone is a violation
+  (k=0.5); and the off-track threshold is **50%** of the body outside the edge line
+  (AR is 30%), which sets the lateral budget. `S_ARC` can roughly double the total.
+  Note `STP = 0.25` is Ackermann-only, so the skid-steering prototype scores 0 there
+  and `final` must be Ackermann to get it.
 - **Final drivetrain: the single rear motor drives both rear wheels through a mechanical
   differential (user, 7 Nov 2026).
 - Motor/servo control path: **Arduino over USB serial** (user decision, 7 Nov 2026).
@@ -119,3 +127,15 @@ module (v1/v2/v3/GS) decides whether a driver/DTB update is needed on JetPack 6.
 - Start button: which pin, which input.
 - Is the steering linkage true Ackermann geometry (affects the 0.25 bonus **[A1]**)?
 - Servo model, steering angle range, wheel base and track width (measured, in mm).
+- **Servo pulse range** (`SERVO_US_MIN` / `SERVO_US_MAX` / `RAD_TO_US` in
+  `final.ino`). Until measured, `SERVO_CALIBRATED` is false and the firmware holds
+  the servo neutral and keeps the motor stopped — the car cannot steer. That is
+  deliberate: the previous placeholder (0) commanded 544 µs, i.e. hard lock.
+- **`MPS_TO_PWM`** in both sketches. Until measured it is 0, so every speed command
+  becomes PWM 0: the robot accepts valid commands and never moves. Both sketches
+  now print a warning at boot instead of failing silently.
+- **Cone colour** (`obstacle.hues` in `configs/*.yaml`) — the detector's default is
+  an unconfirmed orange band. Measure on the real cone [A11].
+- **Cone diameter** — the swerve clearance (`avoid.clearance_m = 0.16`) assumes
+  car half-width 0.10 m + cone radius ~0.04 m + margin. Re-check against the real
+  cone, since hitting one is a violation in the ARC.

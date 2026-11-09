@@ -28,7 +28,7 @@ _UNO_RESET_S = 2.0  # the Uno reboots when the serial port is opened; commands s
 
 
 class Driver:
-    """policy_fn for mav.app.step: detect -> avoid cones -> checkpoints -> policy, with a BOUNDED hold on a lost lane.
+    """policy_fn for mav.app.step: detect -> avoid cones -> count passes -> policy, with a BOUNDED hold on a lost lane.
 
     LanePolicy(on_lost="hold") returns the `last` command it is given; the policy keeps no state, so this
     class passes it in and stops the robot if the lane stays lost longer than max_hold_s.
@@ -36,13 +36,18 @@ class Driver:
     Cone avoidance is applied to the measured lane offset, not to the command: the policy keeps steering
     at the lane, just at a shifted target. With no cone detector (or `avoid_cfg.enabled: false`) the
     measurement reaches the policy untouched, so behaviour is unchanged.
+
+    `cone_tracker` produces the ARC score: in the ARC, checkpoints ARE the obstacles, so a cone that is
+    physically passed calls `sm.add_checkpoint()`. That is a separate object from `cones` (which only
+    answers "what is in front of me now") because counting needs history and detection must not.
     """
 
     def __init__(self, detector, policy, tracker=None, max_hold_s: float = 0.5,
-                 clock=time.monotonic, cones=None, avoid_cfg=None):
+                 clock=time.monotonic, cones=None, avoid_cfg=None, cone_tracker=None):
         self._detector, self._policy, self._tracker = detector, policy, tracker
         self._max_hold_s, self._clock = max_hold_s, clock
         self._cones, self._avoid_cfg = cones, avoid_cfg
+        self._cone_tracker = cone_tracker
         self.last: Command = STOP
         self.meas = None
         self.lost = False
@@ -60,6 +65,9 @@ class Driver:
                 ev = self._tracker.update(frame)
                 if ev is not None:
                     sm.finish() if ev.kind == "finish" else sm.add_checkpoint()
+            if self._cone_tracker is not None and self._cone_tracker.update(frame) is not None:
+                # ARC §8: passing an obstacle counts as passing the checkpoint.
+                sm.add_checkpoint()
         pc = self._policy.cfg
         # The lost test uses the MEASURED offset, not the swerved target: the lane
         # is either seen or it is not, regardless of which way we dodge.
@@ -122,7 +130,7 @@ def main(argv: list[str] | None = None) -> int:
     from mav.io.camera import open_csi, open_usb, open_video
     from mav.perception.checkpoint import CrossLineDetector, CrossLineTracker
     from mav.perception.lane import LaneDetector
-    from mav.perception.obstacle import ConeDetector
+    from mav.perception.obstacle import ConeDetector, ConePassTracker
     from mav.planning.lane_policy import LanePolicy, LanePolicyConfig
     from mav.types import load_vehicle_params
 
@@ -146,9 +154,16 @@ def main(argv: list[str] | None = None) -> int:
     tracker = (CrossLineTracker(CrossLineDetector(cp_cfg))
                if cp_cfg.checkpoint_hues or cp_cfg.finish_hues else None)
     obs_cfg, avoid_cfg = load_obstacle_config(profile), load_avoid_config(profile)
-    # No cones expected (AR only) or swerving turned off: skip the detector, it is
-    # a full-frame HSV pass and would be pure cost.
-    cones = ConeDetector(obs_cfg) if obs_cfg.hues and avoid_cfg.enabled else None
+    # No cones expected or swerving turned off: skip the detectors, they are a
+    # full-frame HSV pass each and would be pure cost.
+    if obs_cfg.hues:
+        cones = ConeDetector(obs_cfg) if avoid_cfg.enabled else None
+        # Counting is independent of swerving: ARC scores cones passed, so the
+        # tracker runs even with avoidance disabled (robot would hit them, but
+        # the count stays honest about what it did).
+        cone_tracker = ConePassTracker(ConeDetector(obs_cfg))
+    else:
+        cones = cone_tracker = None
     cam_sec = cfg.get("camera") or {}
     act_sec = cfg.get("actuator") or {}
     port_name = args.port or act_sec.get("port")
@@ -169,7 +184,8 @@ def main(argv: list[str] | None = None) -> int:
         time.sleep(_UNO_RESET_S)
     actuator = SafeActuator(SerialActuator(mapper, ser), max_speed_mps=params.max_speed_mps, timeout_s=0.3)
 
-    driver = Driver(detector, policy, tracker, max_hold_s, cones=cones, avoid_cfg=avoid_cfg)
+    driver = Driver(detector, policy, tracker, max_hold_s, cones=cones,
+                    avoid_cfg=avoid_cfg, cone_tracker=cone_tracker)
     buttons = QueueButtons()
     sm = RobotStateMachine()
     sm.boot_done()

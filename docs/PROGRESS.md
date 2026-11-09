@@ -280,36 +280,68 @@ Split into 4 subtasks (one at a time, commit after each):
       remains, and it is the user's in-progress work (render.py/lane.py/runner.py
       /scenarios.py/world.py uncommitted - not touched here).
 
-## Current task: obstacle (orange cone) avoidance, rules §8
+## Current task: obstacle (orange cone) avoidance — ARC chosen 9 Nov 2026
 
-Why: the user's arena update (9 Nov 2026) — the thing ON the lane is cones, and the
-penalty table decides the whole strategy: hitting a cone `k = 0.5`, leaving the
-track `k = 0.8`. So a swerve is only worth it while it stays inside the lane.
+**Scope decision: ARC (Autonomous Race Challenge), rules §8.** Not AR. The
+difference that matters for the code: in the ARC **checkpoints ARE the obstacles**.
+"Avoiding an obstacle counts as passing the checkpoint", so the scoring term `cp`
+— the biggest term in the formula — is the number of CONES PASSED, not lines
+crossed. Hitting or failing to avoid one is a violation (k=0.5), and off track
+is 50% of the body outside the edge (AR is 30%), so the ARC is also the looser
+of the two on lateral room.
+
+Score: `Total = S_AR * (1 + STP + S_ARC)`, `S_ARC` up to 1.0, so the challenge
+can roughly double the score. `STP = 0.25` only for Ackermann, so the prototype
+(skid steering) gets 0 and `final` must be Ackermann.
 
 - [x] Detection `src/mav/perception/obstacle.py`: `ConeDetector` -> list of blobs
       (nearest first) with lateral/distance in metres, reusing `_hsv`/`_hue_mask`/
       `_runs` from `checkpoint.py`. Colour-first like the cross-line detector, so
-      white/black lane markings and the grey floor can never match. `hues: []`
-      disables it (AR only).
+      white/black lane markings and the grey floor can never match.
+- [x] Counting `ConePassTracker` (same file): one event per cone physically
+      passed, feeding `sm.add_checkpoint()` — this is the ARC score. Same two
+      rules as `CrossLineTracker`: must be SEEN APPROACHING (a cone the robot is
+      restarted beside never counts) and must leave through the bottom. It
+      deliberately does NOT judge "was it avoided" — that distance is an
+      unanswered rule question and the referee applies the penalty.
 - [x] Decision `src/mav/planning/avoid.py`: `choose_offset()` is a PURE function
       (no state, no camera) — pure pursuit's lane offset in, a clamped target out.
       Picks the side needing the smaller deviation; when neither side fits inside
-      `max_offset_m`, it returns the lane offset unchanged and accepts the cone.
+      `max_offset_m`, it returns the lane offset unchanged and accepts the cone
+      (k=0.5 is cheaper than the k=0.8 for leaving the track).
 - [x] Wired into `Driver` (`src/mav/robot.py`): the target REPLACES `offset_m` in
       the measurement handed to `LanePolicy`, so the policy still steers at the
       lane, only at a shifted aim point. The lost-lane test uses the MEASURED
       offset, not the swerve target. No cone detector -> behaviour is unchanged.
 - [x] Config: `obstacle:` (hue band UNCONFIRMED, saturation/value gates, `roi_top`)
-      and `avoid:` (`clearance_m`, `max_offset_m`, `horizon_m`) in
-      `configs/prototype.yaml` and `configs/final.yaml`; `load_obstacle_config()`
-      INHERITS `px_per_m`/`bottom_row_m` from `lane:` so one camera move stays one
-      edit. Tests: `tests/test_obstacle.py` (16), `tests/test_robot.py` (+3),
-      `tests/test_config.py` (+6); full suite 244 passed (laptop).
+      and `avoid:` in `configs/prototype.yaml` and `configs/final.yaml`;
+      `load_obstacle_config()` INHERITS `px_per_m`/`bottom_row_m` from `lane:` so
+      one camera move stays one edit.
+      ARC geometry: violation at 0.35 m from the lane centre (0.50 lane, 0.20 car,
+      50% outside); `max_offset_m: 0.18` keeps 0.17 m of margin, because aiming at
+      the exact threshold trades a 0.5 penalty for a 0.8 one on any bad detection.
+      `clearance_m: 0.16` is car half-width + cone radius — the first version used
+      0.12 and that was wrong (it would have clipped the cone).
+- [x] Firmware safety, found while answering "is the Arduino code safe?":
+      `final.ino` had `SERVO_US_NEUTRAL = 0`, and `Servo::writeMicroseconds()`
+      clamps to MIN_PULSE_WIDTH = 544 µs, so "boot = neutral" actually booted the
+      steering HARD OVER. Now 1500 (the library default) plus a `SERVO_CALIBRATED`
+      gate that holds neutral and stops the motor rather than steering on an
+      unmeasured range. Both sketches now warn on serial at boot when
+      `MPS_TO_PWM == 0` (previously: valid commands in, wheels never turning,
+      indistinguishable from a software bug). `tests/test_firmware_sketches.py`
+      guards all of it; each assertion was verified to fail when the bug is
+      reintroduced.
+- Tests: `tests/test_obstacle.py` (25), `tests/test_robot.py` (+7),
+      `tests/test_config.py` (+6), `tests/test_firmware_sketches.py` (6);
+      full suite 263 passed (laptop). Both .ino sketches compile (prototype
+      5162 B flash / 280 B RAM, final 5106 B / 321 B).
 - [ ] Not done: rendering cones in the simulator. It needs `render.py` + wiring in
       `runner.py` (which calls the detector directly, NOT through `Driver`), and
-      both files are the user's active work. Add when the sim can draw a cone.
-- [ ] Not measured: the real cone hue. Until it is read off the arena the detector
-      is a guess (`obstacle.hues`, marked UNCONFIRMED [A11]).
+      both files are the user's active work.
+- [ ] Not measured: the real cone hue, and `MPS_TO_PWM` (so the car cannot move
+      yet), and the servo range (so `final` cannot steer yet). Both firmware
+      values are physical measurements, not code changes.
 
 ## Next tasks (in order)
 

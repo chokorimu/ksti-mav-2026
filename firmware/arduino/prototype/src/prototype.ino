@@ -37,6 +37,10 @@ const int PIN_IN4 = 8;
 
 const int PWM_MAX       = 255;    // Uno/AVR: analogWrite range
 const float MPS_TO_PWM  = 0.0f;   // TODO: measured wheels-lifted -> docs/hardware.md
+// MPS_TO_PWM == 0 means "not measured". Without this flag the robot fails
+// SILENTLY: every speed command becomes PWM 0, the wheels never turn, and it
+// looks like a software bug rather than an uncalibrated robot.
+const bool SPEED_CALIBRATED = MPS_TO_PWM > 0.0f;
 static const unsigned long SERIAL_BAUD = 115200UL;  // protocol.md (matters on
                                                     // the Uno: ATmega16U2, not
                                                     // native USB)
@@ -60,6 +64,12 @@ void setup() {
   pinMode(PIN_IN4, OUTPUT);
   Serial.begin(SERIAL_BAUD);
   stop_motors();  // boot state: everything off (protocol.md)
+  if (!SPEED_CALIBRATED) {
+    // Not fatal, but never silent: with MPS_TO_PWM == 0 every speed command
+    // becomes PWM 0, so the robot receives valid commands and never moves.
+    Serial.println(F("WARN: MPS_TO_PWM uncalibrated - wheels will not turn."));
+    Serial.println(F("      Measure wheels-lifted, then set MPS_TO_PWM."));
+  }
 }
 
 void loop() {

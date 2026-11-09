@@ -117,16 +117,21 @@ tests/
     and `app.py` are untouched by it. Only the `sim` profile starts a server (`--dashboard`
     or `dashboard.enabled` in `configs/sim.yaml`); `final` has no such section and stays
     serverless. Tests: `tests/test_dashboard.py`, `tests/test_dashboard_server.py`.
-- `src/mav/perception/obstacle.py` + `src/mav/planning/avoid.py`: cone detection
-    (`ConeDetector`, colour-first, `obstacle:` section) and the pure swerve
-    decision (`choose_offset`, `avoid:` section), wired into `Driver`: the swerve
+- `src/mav/perception/obstacle.py`: cone detection (`ConeDetector`) + ARC scoring
+    (`ConePassTracker`: a cone passed increments `cp`, because in the ARC the
+    obstacles ARE the checkpoints, rules §8), and `src/mav/planning/avoid.py`:
+    the pure swerve decision (`choose_offset`). Wired into `Driver`: the swerve
     target replaces `offset_m` before `LanePolicy`, and never leaves the lane
-    (hit cone k=0.5 is cheaper than off-track k=0.8). Checkpoints turned out to be
-    markers OUTSIDE the lane (user, 9 Nov 2026), so crossing detection is not
-    needed. Tests: `tests/test_obstacle.py`.
+    (hit cone k=0.5 is cheaper than off-track k=0.8). Scope decision (user,
+    9 Nov 2026): **ARC, not AR**. Tests: `tests/test_obstacle.py`.
+- `firmware/arduino/`: `tests/test_firmware_sketches.py` guards the two sketches
+    against constants that look calibrated but are not — `SERVO_US_NEUTRAL = 0`
+    in `final.ino` used to boot the steering hard over (the Servo library clamps
+    to 544 µs), and `MPS_TO_PWM = 0` made every speed command PWM 0. Both
+    sketches now warn on serial at boot instead of failing silently.
 - **Not written yet:** the firmware's measured constants (m/s->PWM calibration,
     servo model + microsecond range, servo 5 V BEC - all Q1: measure, do not
-    guess), GPIO buttons, the real cone colour, and the dashboard's browser
+    guess), GPIO buttons, the real cone hue, and the dashboard's browser
     visual check (frontend built in `8875d48`). The firmware itself compiles
     for the Uno; see `firmware/arduino/README.md`.
 
