@@ -144,22 +144,27 @@ lalu sebutkan nilai mana yang harus saya isi.
 ### Tugas 1 — Kalibrasi kamera (paling penting)
 
 ```
-Tugas: menghitung `bottom_row_m` untuk konfigurasi kamera robot.
+Tugas: membantu saya mengisi px_per_m lewat pengukuran lebar jalur.
 
-Yang saya punya:
-- Kamera dipasang di robot, tinggi h meter di atas lantai.
-- Kamera dimiringkan ke bawah sebesar theta derajat (sudut pitch).
-- Frame berukuran 640x360 piksel (lebar x tinggi).
-- Vertical field of view kamera = fov_v derajat.
+Konteks: jalur lomba lebarnya 0.50 m +-10% (aturan §6). Kamera melihat jalur
+itu, jadi lebar jalur dalam piksel adalah penggaris saya:
 
-Yang saya butuhkan: jarak maju (meter) dari kamera ke titik di lantai yang
-jatuh di baris PALING BAWAH frame. Itu nilai `bottom_row_m`.
+    px_per_m = (lebar jalur dalam piksel) / 0.50
 
-Turunkan rumusnya, lalu beri saya satu fungsi Python kecil yang menerima
-(h, theta, fov_v, tinggi_frame_px) dan mengembalikan bottom_row_m.
+Saya sudah punya alat `python -m mav.tools.calibrate_scale <video>` yang
+menghitung itu dari rekaman. Yang saya butuhkan darimu:
 
-Setelah itu, jelaskan cara saya memverifikasi hasilnya dengan penggaris di
-lantai.
+1. Periksa rumusnya: `max(col) - min(col)` dari centroid band pada baris
+   lookahead. Kalau ada kesalahan geometri atau perspektif yang membuat ini
+   bias, jelaskan dan beri koreksinya.
+2. Jelaskan sumber error utama dan besarannya: kamera miring (pitch), kamera
+   tidak di tengah, lensa wide (distorsi barrel), jalur tidak persis 0.50 m.
+   Mana yang paling besar pengaruhnya, dan apakah perlu dikoreksi?
+3. Apakah `bottom_row_m` bisa dihitung dari px_per_m, atau perlu diukur
+   terpisah? Kalau perlu, turunkan rumusnya dari tinggi + pitch + FOV.
+
+Jangan mengarang nilai kamera. Kalau sebuah angka tidak ada di konteks ini,
+tulis "PERLU DIUKUR".
 ```
 
 ### Tugas 2 — Tombol fisik di Jetson

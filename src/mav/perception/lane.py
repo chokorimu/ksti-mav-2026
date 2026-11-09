@@ -526,7 +526,22 @@ def _main(argv: list[str]) -> int:
         return 2
     video_path = args[0]
 
-    detector = LaneDetector()
+    # Read the profile config, not the code defaults: the whole point of the
+    # calibration loop is that `px_per_m`/`bottom_row_m` are measured values in
+    # configs/<profile>.yaml. Without this the runner would ignore every edit
+    # made during calibration and always report the old numbers.
+    from mav.config import load_lane_config, profile_name
+
+    profile = profile_name()
+    try:
+        lane_cfg = load_lane_config(profile)
+    except FileNotFoundError as e:
+        print(f"note: {e}; using code defaults")
+        lane_cfg = None
+    if lane_cfg is not None:
+        print(f"profile: {profile}  px_per_m={lane_cfg.px_per_m:g}  "
+              f"bottom_row_m={lane_cfg.bottom_row_m:g}  roi_top={lane_cfg.roi_top:g}")
+    detector = LaneDetector(lane_cfg)
     cam = open_video(video_path)
     writer = None
     latencies: list[float] = []
