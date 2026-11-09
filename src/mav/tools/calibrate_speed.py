@@ -139,6 +139,25 @@ def fit_speed_model(points: list[tuple[float, float]]) -> SpeedModel:
     )
 
 
+def _vehicle_max_speed() -> float | None:
+    """`max_speed_mps` from configs/vehicle.yaml, or None when it cannot be read.
+
+    Read, not hardcoded: the ceiling is a measured/safety value that lives in
+    config, and duplicating it here would let the two drift apart.
+    """
+    try:
+        from mav.config import repo_root
+
+        import yaml
+
+        path = repo_root() / "configs" / "vehicle.yaml"
+        cfg = yaml.safe_load(path.read_text()) or {}
+        value = cfg.get("max_speed_mps")
+        return float(value) if value is not None else None
+    except Exception:  # a missing/broken config must not block calibration
+        return None
+
+
 # ------------------------------------------------------------------ hardware ----
 
 
@@ -185,6 +204,7 @@ def sweep(
     drive: str = "differential",
     seconds: float = 4.0,
     ask=input,
+    max_speed_mps: float | None = None,
 ) -> list[tuple[float, float]]:
     """Run the sweep, returning [(pwm, speed_mps)] with the speed the operator read.
 
@@ -196,6 +216,18 @@ def sweep(
     """
     if not 0.0 < k_current:
         raise SystemExit("--k-current must be > 0 (the MPS_TO_PWM currently flashed)")
+    # This function writes straight to the serial port, so it never passes
+    # through SafeActuator and never sees its max_speed_mps clamp. Refusing here
+    # is the only thing standing between a sweep and a car doing twice its
+    # configured top speed on the operator's first run.
+    for pwm in pwms:
+        v = pwm / k_current
+        if max_speed_mps is not None and v > max_speed_mps:
+            raise SystemExit(
+                f"PWM {pwm} means {v:.3f} m/s at --k-current {k_current:g}, above "
+                f"max_speed_mps {max_speed_mps:g} in configs/vehicle.yaml.\n"
+                "Lower the PWM list, or raise --max-speed deliberately."
+            )
     ser = _open_serial(port)
     points: list[tuple[float, float]] = []
     try:
@@ -287,6 +319,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("--seconds", type=float, default=4.0, help="run duration per point")
     ap.add_argument(
+        "--max-speed",
+        type=float,
+        default=None,
+        help="safety ceiling in m/s. Defaults to max_speed_mps from "
+        "configs/vehicle.yaml, because this tool writes to the port directly and "
+        "so bypasses SafeActuator's clamp.",
+    )
+    ap.add_argument(
         "--dry-run",
         action="store_true",
         help="print the sweep and a worked example without touching hardware",
@@ -317,6 +357,12 @@ def main(argv: list[str] | None = None) -> int:
     if not args.port:
         print("--port is required for a real sweep (or use --dry-run)")
         return 2
+
+    ceiling = args.max_speed
+    if ceiling is None:
+        ceiling = _vehicle_max_speed()
+        if ceiling is not None:
+            print(f"safety ceiling from configs/vehicle.yaml: {ceiling:g} m/s")
     print("The car WILL move. Clear floor, e-stop in hand, battery charged,")
     print("and the same surface and charge for every point.")
     points = sweep(
@@ -325,6 +371,7 @@ def main(argv: list[str] | None = None) -> int:
         args.pwm,
         drive=args.drive,
         seconds=args.seconds,
+        max_speed_mps=ceiling,
     )
     if not points:
         print("\nno measurements entered, nothing to fit")

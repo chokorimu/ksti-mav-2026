@@ -177,24 +177,38 @@ Safety first: e-stop in hand and tested, motors running only on the floor, a cle
 straight run of at least 4 m, the same surface for every point, and the battery
 charged the same way each time (a sagging pack changes the speed).
 
-1. Flash the firmware with a **provisional** `MPS_TO_PWM` (300 is a fine starting
-   point) and `PWM_DEADBAND = 0`. The provisional value only has to let the car move;
-   the sweep converts each PWM target into the m/s command the firmware needs, so the
-   fit does not depend on the provisional value being right.
+1. **Flash a PROVISIONAL value first — this is not optional.** With
+   `MPS_TO_PWM = 0` the firmware turns every command into PWM 0, so the car will not
+   move even for the calibration itself. Edit
+   `firmware/arduino/prototype/src/prototype.ino`:
+   ```c
+   const float MPS_TO_PWM   = 300.0f;  // PROVISIONAL, replaced in step 5
+   const float PWM_DEADBAND = 0.0f;
+   ```
+   then `scripts/flash_firmware.sh prototype`. The provisional value only has to let
+   the car move: the sweep converts each PWM target into the m/s command the firmware
+   needs, so the fit does not depend on the provisional value being correct.
+   **This is the only step where the car is calibrated against a number you have not
+   measured — do it with the wheels off the ground first to confirm direction.**
 2. Tape a start line and put a tape measure along the run.
 3. Run:
    ```
-   PYTHONPATH=src python -m mav.tools.calibrate_speed --port /dev/ttyACM0 \
-       --k-current 300 --pwm 50 70 90 120 150 180
+   PYTHONPATH=src python -m mav.tools.calibrate_speed --port /dev/ttyUSB0 \
+       --k-current 300 --pwm 40 60 80 100 130 160 --seconds 3
    ```
    (`--drive ackermann` for the `final` build, which speaks `D` instead of `W`.)
+   A Nano clone shows up as `/dev/ttyUSB*` (CH340); a genuine one as `/dev/ttyACM*`.
+   Check with `scripts/flash_firmware.sh --list-ports`.
+   The tool reads `max_speed_mps` from `configs/vehicle.yaml` and **refuses** any PWM
+   that would exceed it: it writes to the port directly, so it never passes through
+   `SafeActuator`'s clamp. Raise `--max-speed` only on purpose.
 4. For each PWM: press Enter, the car runs for `--seconds`, it stops, you enter how
    far it travelled in metres. The tool streams the command at 20 Hz on purpose — the
    firmware's watchdog stops the motors after 500 ms without a valid line, so a
    one-off command would coast after half a second and be measured as far too slow.
 5. The tool fits both constants, prints the residual, and shows the model against
-   every measurement. Paste the two lines into the sketch, recompile, and record them
-   here:
+   every measurement. Paste the two lines into the sketch (replacing the provisional
+   300), **reflash**, and record them here:
 
    ```
    MPS_TO_PWM   = ______   # measured <date>, <floor surface>, battery <V>

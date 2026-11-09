@@ -149,3 +149,43 @@ def test_sweep_refuses_a_zero_k_current():
     """With K = 0 every command is 'W 0.000 0.000': a run that measures nothing."""
     with pytest.raises(SystemExit, match="k-current"):
         cs.sweep("/dev/null", 0.0, [60])
+
+
+# --------------------------------------------------------------- safety ceiling --
+def test_sweep_refuses_pwm_above_the_safety_ceiling():
+    """This tool writes to the port directly, so SafeActuator never sees it.
+
+    `max_speed_mps` (configs/vehicle.yaml) is the ceiling the rest of the system
+    relies on. The default PWM sweep with --k-current 300 reaches 0.6 m/s, i.e.
+    twice that ceiling - so the refusal has to live here, not only in the config.
+    """
+    with pytest.raises(SystemExit, match="above max_speed_mps"):
+        cs.sweep("/dev/null", 300.0, [180], max_speed_mps=0.3)
+
+
+def test_sweep_allows_pwm_inside_the_ceiling():
+    """The guard must not block a legitimate low-speed sweep.
+
+    Reaches the port open (which fails for /dev/null in this environment), so
+    the assertion is that it gets PAST the ceiling check rather than a clean run.
+    """
+    with pytest.raises(Exception) as exc:
+        cs.sweep("/dev/null", 300.0, [90], max_speed_mps=0.3)
+    assert "above max_speed_mps" not in str(exc.value)
+
+
+def test_ceiling_is_optional():
+    """No ceiling configured must not mean 'refuse to calibrate'."""
+    with pytest.raises(Exception) as exc:
+        cs.sweep("/dev/null", 300.0, [180], max_speed_mps=None)
+    assert "above max_speed_mps" not in str(exc.value)
+
+
+def test_vehicle_max_speed_is_read_not_hardcoded():
+    """The ceiling comes from config, so there is one source of truth."""
+    value = cs._vehicle_max_speed()
+    assert value is None or value > 0.0
+    if value is not None:
+        assert value == pytest.approx(0.3), (
+            "configs/vehicle.yaml max_speed_mps changed; update this pin deliberately"
+        )
