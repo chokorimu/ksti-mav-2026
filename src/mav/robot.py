@@ -111,7 +111,14 @@ def _autodetect_port(where: str) -> str:
     if not found:
         raise SystemExit(
             f"{where}: actuator.port is not set and no Arduino was found over USB.\n"
-            "Plug the board in, or pass --port (see scripts/flash_firmware.sh --list-ports)."
+            "The Nano gets power from USB, so if it is connected it should appear.\n"
+            "Check on this machine:\n"
+            "  scripts/flash_firmware.sh prototype --list-ports   # /dev/ttyACM* or /dev/ttyUSB*\n"
+            "  lsusb | grep -i '1a86\\|2341'                       # 1a86 = CH340 clone, 2341 = genuine\n"
+            "  dmesg | tail -5                                    # does the kernel see it at all?\n"
+            "If the device exists but cannot be OPENED, you may need: "
+            "sudo usermod -aG dialout $USER (then log out and back in).\n"
+            "Or pass --port /dev/ttyUSB0."
         )
     raise SystemExit(
         f"{where}: actuator.port is not set and {len(found)} serial devices are "

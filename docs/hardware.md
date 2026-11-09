@@ -120,6 +120,21 @@ The check runs *before* the camera opens on purpose: the first version crashed
 after the Argus/GStreamer log, so a missing Python package looked like a camera
 fault.
 
+**`no Arduino was found over USB`.** The Nano is powered from USB, so if it is
+connected it should appear. On the Jetson:
+```bash
+scripts/flash_firmware.sh prototype --list-ports   # /dev/ttyACM* or /dev/ttyUSB*
+lsusb | grep -i '1a86\|2341'                       # 1a86 = CH340 clone, 2341 = genuine
+dmesg | tail -5                                    # does the kernel see it at all?
+```
+- **Nothing in `lsusb`**: the cable is charge-only, or the port is dead. Swap the
+  cable first - this is the most common cause and costs nothing to test.
+- **In `lsusb` but no `/dev/ttyUSB*`**: the CH340 driver is not loaded. Check
+  `lsmod | grep ch34x`; if it is missing, `sudo modprobe ch341`.
+- **Device present but `permission denied`**: your user is not in `dialout`, which
+  is the default on a fresh JetPack install. `sudo usermod -aG dialout $USER`, then
+  **log out and back in** - group changes only apply to a new login.
+
 **Finding the port on the Jetson.** `scripts/flash_firmware.sh prototype --list-ports`
 works there even though `pio` does not (the AVR toolchain is x86-only): listing
 ports is pure bash and deliberately sits before the `pio` check.

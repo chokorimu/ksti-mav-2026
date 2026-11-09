@@ -217,3 +217,34 @@ def test_both_requirement_files_declare_pyserial():
             for ln in (root / name).read_text().splitlines()
         ]
         assert "pyserial" in lines, f"{name} must declare pyserial explicitly"
+
+
+# ------------------------------------------------------- permission, not wiring --
+def test_permission_denied_is_diagnosed_as_rights_not_wiring(monkeypatch):
+    """The confusing case: the port is RIGHT THERE in the list, yet cannot open.
+
+    "cannot open /dev/ttyUSB0" followed by "ports that exist: /dev/ttyUSB0"
+    reads like nonsense. It means the user is not in `dialout`, which is the
+    default on a fresh JetPack install - so the message has to say that, and say
+    that the fix needs a fresh login.
+    """
+    class FakeSerial:
+        class SerialException(Exception):
+            pass
+
+        @staticmethod
+        def Serial(port, baud, timeout=0):
+            raise FakeSerial.SerialException(
+                "[Errno 13] could not open port /dev/ttyUSB0: "
+                "[Errno 13] Permission denied: '/dev/ttyUSB0'"
+            )
+
+    monkeypatch.setitem(sys.modules, "serial", FakeSerial)
+    with pytest.raises(A.SerialUnavailable) as exc:
+        A.open_serial_port("/dev/ttyUSB0")
+    msg = str(exc.value)
+    assert "permission" in msg.lower()
+    assert "dialout" in msg
+    assert "log out" in msg.lower() or "LOG OUT" in msg
+    # It must NOT be reported as a missing port: the port exists.
+    assert "Ports that do exist" not in msg

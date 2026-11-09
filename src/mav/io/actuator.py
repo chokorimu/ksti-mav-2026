@@ -137,11 +137,25 @@ def open_serial_port(port: str, baudrate: int = SerialActuator.BAUDRATE):
     The error carries the ports that DO exist: a wrong port name is the most
     common cause, and it is easy to get wrong because a genuine Nano is
     /dev/ttyACM* while a CH340 clone is /dev/ttyUSB*.
+
+    Permission is the second most common cause, and it needs its own message: the
+    port is right there in the list, so "cannot open /dev/ttyUSB0" plus "ports
+    that exist: /dev/ttyUSB0" reads like nonsense. It means the user is not in
+    the `dialout` group, which is the default on a fresh JetPack install.
     """
     serial = require_serial()
     try:
         return serial.Serial(port, baudrate, timeout=0)
     except serial.SerialException as exc:
+        if "permission" in str(exc).lower():
+            raise SerialUnavailable(
+                f"cannot open serial port {port!r}: permission denied.\n"
+                f"The port EXISTS, so this is an access-rights problem, not a wiring one.\n"
+                f"Fix it once:  sudo usermod -aG dialout $USER\n"
+                f"then LOG OUT and back in (group changes only apply to a new login).\n"
+                f"Check with:   groups | grep dialout\n"
+                f"A quick temporary test:  sudo -E python -m mav ... (do not ship that)"
+            ) from exc
         found = list_serial_ports()
         available = f"Ports that do exist: {', '.join(found)}" if found else (
             "No serial ports found at all - is the Arduino plugged in?"

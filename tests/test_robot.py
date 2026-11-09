@@ -314,3 +314,22 @@ def test_serial_is_checked_before_the_camera_opens(monkeypatch):
     with pytest.raises(SystemExit, match="pyserial is not installed"):
         robot.main(["--port", "/dev/ttyUSB0", "--video", "whatever.mp4"])
     assert opened == [], "the camera was opened before the dependency was checked"
+
+
+def test_no_board_message_says_how_to_check(monkeypatch):
+    """A dead end is not a message. It must name the commands that find the board.
+
+    The Nano is powered over USB, so "not found" almost always means unplugged -
+    but it can also mean a missing CH340 driver or a permission problem, and the
+    operator needs to be able to tell those apart without reading the source.
+    """
+    import mav.robot as robot
+
+    monkeypatch.setattr(robot, "list_serial_ports", lambda: [])
+    with pytest.raises(SystemExit) as exc:
+        robot._autodetect_port("configs/prototype.yaml")
+    msg = str(exc.value)
+    assert "--list-ports" in msg          # how to list what is there
+    assert "lsusb" in msg                 # how to see the USB device itself
+    assert "dmesg" in msg                 # whether the kernel saw it
+    assert "dialout" in msg               # the permission fix
