@@ -156,6 +156,37 @@ class _FakeCam:
         pass
 
 
+def test_a_clip_of_a_different_width_is_rescaled(monkeypatch, capsys):
+    """px_per_m is PIXELS per metre, so frame width matters.
+
+    The robot's CSI pipeline outputs 640x360; a phone clip is 854x480. A value
+    measured on a clip of a different width is wrong for the robot by exactly
+    that ratio, and nothing in the detector would notice - it would just report
+    every offset ~33% too large.
+    """
+    spans = iter([100.0] * 160)
+    monkeypatch.setattr(cs, "open_video", lambda _p: _WideCam(spans, width=854))
+    monkeypatch.setattr(cs, "_span_at_lookahead", lambda _d, _f: (next(spans), 0.9))
+    monkeypatch.setattr(cs, "load_lane_config", lambda _n: _cfg_for_scale())
+    monkeypatch.setattr(cs, "profile_name", lambda _p=None: "prototype")
+
+    assert cs.calibrate("fake.mp4") == 0
+    out = capsys.readouterr().out
+    # 100 px / 0.50 m = 200 at 854 px wide -> 200 * 640/854 = 150 at robot width.
+    assert "150" in out
+    assert "px_per_m: 150" in out
+
+
+class _WideCam(_FakeCam):
+    def __init__(self, spans, width):
+        super().__init__(spans)
+        self.width = width
+
+    def read(self):
+        f = super().read()
+        return None if f is None else np.zeros((360, self.width, 3), dtype=np.uint8)
+
+
 def _cfg_for_scale():
     from mav.perception.lane import LaneConfig
 

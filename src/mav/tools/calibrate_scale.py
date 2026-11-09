@@ -86,12 +86,14 @@ def calibrate(video_path: str, *, lane_m: float = 0.50, profile: str | None = No
     cam = open_video(video_path)
     spans: list[float] = []
     frames = 0
+    frame_w = 0
     try:
         while True:
             frame = cam.read()
             if frame is None:
                 break
             frames += 1
+            frame_w = int(np.asarray(frame).shape[1])
             got = _span_at_lookahead(detector, frame)
             if got is not None:
                 span_px, conf = got
@@ -120,6 +122,7 @@ def calibrate(video_path: str, *, lane_m: float = 0.50, profile: str | None = No
     print(f"video    : {video_path}")
     print(f"profile  : {name} (current px_per_m = {current.px_per_m:g})")
     print(f"frames   : {frames}, usable {len(spans)} ({100 * len(spans) / frames:.0f}%)")
+    print(f"frame    : {frame_w} px wide")
     print(f"lane span: median {span_px:.1f} px  (p25 {p25:.1f}, p75 {p75:.1f})  "
           f"assumed {lane_m:g} m wide")
 
@@ -147,14 +150,25 @@ def calibrate(video_path: str, *, lane_m: float = 0.50, profile: str | None = No
     print(f"  current          = {current.px_per_m:g}")
     print(f"  ratio            = {derived / current.px_per_m:.2f}x")
     print()
-    print("If that ratio is far from 1.0, every offset reported so far was wrong")
-    print("by that factor - which is what 'the policy stops after 1.75 m' looks")
-    print("like from the inside.")
-    print()
+    # Resolution trap: px_per_m is PIXELS per metre, so the same wall is a
+    # different number of pixels at a different frame width. The robot's CSI
+    # pipeline delivers 640x360; a phone clips at 854x480. A value measured on a
+    # clip of a different width is off by exactly that ratio.
+    robot_w = 640
+    if frame_w and frame_w != robot_w:
+        print(f"  NOTE: this clip is {frame_w} px wide, the robot camera is {robot_w}.")
+        print(f"  px_per_m is PIXELS per metre, so a different frame width needs a")
+        print(f"  different value. Rescaled to {robot_w} px wide:")
+        print(f"    px_per_m for {robot_w} px frames = {derived * robot_w / frame_w:.0f}")
+        print(f"  Use THIS only if the clip came from the same camera at the same")
+        print(f"  angle - a phone in a different position is a different answer, not")
+        print(f"  a rescaling. Prefer recording with the robot camera.")
+        print()
     print(f"Paste into configs/{name}.yaml, then re-run the detector to confirm")
     print("the detection rate goes UP (a correct scale fixes the smear gate, which")
     print("is what rejects bands on a mis-scaled image):")
-    print(f"  lane: {{ px_per_m: {derived:.0f} }}")
+    value = derived * robot_w / frame_w if frame_w else derived
+    print(f"  lane: {{ px_per_m: {value:.0f} }}")
     return 0
 
 
