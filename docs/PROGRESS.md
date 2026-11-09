@@ -590,6 +590,48 @@ swerve decision and the cone lateral position.
 
 Tests: 365 passed (was 352).
 
+## px_per_m: 597 measured on a STILL clip (10 Nov 2026)
+
+Second recording, `data/recordings/lane_still.mp4` (Jetson only, 117 frames), robot
+stationary as the corrected procedure requires:
+
+```
+frames: 117, usable 117 (100%)      <- was 55% on the moving clip
+lane span: median 317.0 px, dominant group 298.5 px (73%), spread 1.08x
+derived px_per_m = 597   (current 130, ratio 4.59x)
+```
+
+**Gap this exposed in the tool, now closed:** the dash/presence and
+border-cutoff tests lived ONLY in the refusal diagnostics, so a value that
+passed the main gate was never examined for them. A STILL clip reports high
+support trivially (consecutive frames barely differ), which makes the main gate
+weakest exactly where it looks strongest. `_verify_accepted_value()` now checks
+the row that produced an accepted number and refuses if it is a dash (<80%
+presence) or cut off by the frame border.
+
+**Cross-check on the old clip** (`lane.mp4`, invalid for calibration but useful
+as a scale sanity check) - same frames, two scales:
+
+| px_per_m | detected | offset range | over 0.35 m (LOST) |
+|---|---|---|---|
+| 130 | 58% | -1.85 .. +1.98 m | 106/172 (62%) |
+| 597 | 22% | -0.33 .. +0.43 m | 2/64 (3%) |
+
+The offsets scale almost exactly by the 4.59x ratio (-1.85/4.59 = -0.40,
++1.98/4.59 = +0.43), which is the expected signature of a pure scale error, and
+at 597 they finally fit inside a 0.50 m lane. That is strong evidence 597 is
+right. Detection rate DROPS on that clip (58% -> 22%), but it is the invalid
+clip, so it cannot be read as a regression; it must be re-checked on the still
+clip. Plausible mechanism if it reproduces: `cluster_gap_m` is in metres, so at
+597 the merge gap becomes 90 px instead of 20 px, which merges glare specks into
+the line and collapses two-cluster bands into the halved-confidence fallback.
+
+**New tooling for the validation loop:** `python -m mav.perception.lane <video>
+--px-per-m N` tries a candidate scale WITHOUT editing the config (the old order,
+"paste then re-run", writes a wrong value into the file the robot runs from), and
+the summary now prints how many frames would be LOST and the tightest turning
+radius, which are the two numbers that decide whether a scale is usable.
+
 ## Next tasks (in order)
 
 1. **T2 follow-up — BLOCKED on a user decision (asked 7 Nov 2026).** The policy cannot

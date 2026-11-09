@@ -566,8 +566,26 @@ def _main(argv: list[str]) -> int:
         i = args.index("--overlay")
         overlay_path = args[i + 1]
         del args[i:i + 2]
+    # Validate a candidate px_per_m WITHOUT editing the config first. The
+    # calibration tool says "paste it, then re-run the detector", which is the
+    # wrong order: a wrong value has already been written to the file the robot
+    # runs from, and reverting it is a separate step someone will forget. With
+    # this flag the loop is: measure -> try -> look at the offsets -> paste.
+    px_override = None
+    if "--px-per-m" in args:
+        i = args.index("--px-per-m")
+        try:
+            px_override = float(args[i + 1])
+        except (IndexError, ValueError):
+            print("--px-per-m needs a number, e.g. --px-per-m 597")
+            return 2
+        if px_override <= 0:
+            print("--px-per-m must be > 0")
+            return 2
+        del args[i:i + 2]
     if len(args) != 1:
-        print("usage: python -m mav.perception.lane <video> [--overlay out.mp4]")
+        print("usage: python -m mav.perception.lane <video> "
+              "[--overlay out.mp4] [--px-per-m N]")
         return 2
     video_path = args[0]
 
@@ -575,6 +593,8 @@ def _main(argv: list[str]) -> int:
     # calibration loop is that `px_per_m`/`bottom_row_m` are measured values in
     # configs/<profile>.yaml. Without this the runner would ignore every edit
     # made during calibration and always report the old numbers.
+    from dataclasses import replace as _replace
+
     from mav.config import load_lane_config, profile_name
 
     profile = profile_name()
@@ -583,6 +603,10 @@ def _main(argv: list[str]) -> int:
     except FileNotFoundError as e:
         print(f"note: {e}; using code defaults")
         lane_cfg = None
+    if lane_cfg is not None and px_override is not None:
+        lane_cfg = _replace(lane_cfg, px_per_m=px_override)
+        print(f"px_per_m OVERRIDDEN to {px_override:g} for this run only "
+              f"(configs/{profile}.yaml is unchanged)")
     if lane_cfg is not None:
         print(f"profile: {profile}  px_per_m={lane_cfg.px_per_m:g}  "
               f"bottom_row_m={lane_cfg.bottom_row_m:g}  roi_top={lane_cfg.roi_top:g}")
@@ -592,6 +616,7 @@ def _main(argv: list[str]) -> int:
     latencies: list[float] = []
     n = detected = 0
     offsets: list[float] = []
+    curvatures: list[float] = []
     try:
         while True:
             t0 = time.perf_counter()
@@ -604,6 +629,7 @@ def _main(argv: list[str]) -> int:
             if meas is not None:
                 detected += 1
                 offsets.append(meas.offset_m)
+                curvatures.append(meas.curvature_inv_m)
                 if overlay_path is not None:
                     fh, fw = frame.shape[:2]
                     if writer is None:
@@ -633,6 +659,19 @@ def _main(argv: list[str]) -> int:
     if offsets:
         print(f"offset_m: min {min(offsets):+.2f}  max {max(offsets):+.2f}  "
               f"mean {sum(offsets) / len(offsets):+.2f}")
+        # These two decide whether a px_per_m is usable, and neither is visible
+        # from a min/max. A lane that fits in the arena has offsets within
+        # max_offset_m (the policy declares the lane LOST beyond it) and a
+        # curvature no tighter than the rules' minimum turning radius.
+        lim = 0.35
+        lost = sum(1 for o in offsets if abs(o) > lim)
+        print(f"  over {lim:g} m (the policy calls the lane LOST): {lost}/{len(offsets)}"
+              f" ({100.0 * lost / len(offsets):.0f}%)")
+        if curvatures:
+            k = max(abs(c) for c in curvatures)
+            print(f"curvature_inv_m: |max| {k:.2f}  -> tightest radius "
+                  f"{1.0 / k if k > 1e-6 else float('inf'):.1f} m"
+                  f"  (rules allow 1.5 m)")
     print(f"latency ms/frame: mean {arr.mean():.2f}  p95 {np.percentile(arr, 95):.2f}  max {arr.max():.2f}")
     return 0
 

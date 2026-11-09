@@ -338,3 +338,93 @@ def test_tiny_specks_do_not_make_a_lane():
     assert by_row_off and max(by_row_off) > 100, (
         f"expected the specks to be believed without the floor, got {by_row_off}"
     )
+
+
+# --------------------------------- validating a candidate scale BEFORE pasting
+def test_px_per_m_override_does_not_touch_the_config(tmp_path, capsys, monkeypatch):
+    """The calibration loop must be measure -> TRY -> look -> paste.
+
+    `calibrate_scale` prints "paste into configs/<profile>.yaml, then re-run the
+    detector to confirm". That is the wrong order: a wrong value has already been
+    written to the file the robot runs from, and reverting it is a separate step
+    someone forgets. `--px-per-m` tries a value for one run only.
+    """
+    import mav.perception.lane as lane_mod
+
+    # A frame with a clean straight lane so the run reaches its summary.
+    import numpy as np
+
+    frame = np.zeros((360, 640, 3), dtype=np.uint8)
+    frame[:, 120:150] = 255
+    frame[:, 430:460] = 255
+
+    class Cam:
+        def __init__(self):
+            self.i = 0
+
+        def read(self):
+            self.i += 1
+            return frame.copy() if self.i <= 5 else None
+
+        def close(self):
+            pass
+
+    # _main imports open_video INSIDE the function, so the camera module is
+    # where the patch has to land.
+    import mav.io.camera as cam_mod
+
+    monkeypatch.setattr(cam_mod, "open_video", lambda _p: Cam())
+    rc = lane_mod._main(["lane", "clip.mp4", "--px-per-m", "597"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "OVERRIDDEN to 597" in out, out
+    assert "configs/" in out and "unchanged" in out, out
+    # The override must actually reach the DETECTOR, not just be announced: the
+    # profile line prints the config the detector was built from. Without this
+    # assertion the whole flag could be a no-op that still prints its banner.
+    assert "px_per_m=597" in out, f"the override never reached the config:\n{out}"
+    assert "px_per_m=130" not in out, f"the config value leaked through:\n{out}"
+
+
+def test_px_per_m_override_rejects_a_bad_number(capsys, monkeypatch):
+    import mav.perception.lane as lane_mod
+
+    assert lane_mod._main(["lane", "clip.mp4", "--px-per-m", "0"]) == 2
+    assert "must be > 0" in capsys.readouterr().out
+    assert lane_mod._main(["lane", "clip.mp4", "--px-per-m", "abc"]) == 2
+    assert "needs a number" in capsys.readouterr().out
+
+
+def test_runner_reports_how_many_offsets_would_be_lost(capsys, monkeypatch):
+    """The decisive number for a scale: how many frames the POLICY would reject.
+
+    A min/max offset hides it. At px_per_m 130 on the first real clip 62% of
+    detected frames exceeded max_offset_m, so the robot stopped; a scale that is
+    right brings that near zero. Without this count the operator has to do the
+    comparison by hand.
+    """
+    import mav.perception.lane as lane_mod
+
+    frame = np.zeros((360, 640, 3), dtype=np.uint8)
+    frame[:, 120:150] = 255
+    frame[:, 430:460] = 255
+
+    class Cam:
+        def __init__(self):
+            self.i = 0
+
+        def read(self):
+            self.i += 1
+            return frame.copy() if self.i <= 5 else None
+
+        def close(self):
+            pass
+
+    import mav.io.camera as cam_mod
+
+    monkeypatch.setattr(cam_mod, "open_video", lambda _p: Cam())
+    lane_mod._main(["lane", "clip.mp4", "--px-per-m", "597"])
+    out = capsys.readouterr().out
+    assert "LOST" in out, out
+    assert "curvature_inv_m" in out, out
+    assert "rules allow 1.5 m" in out, out

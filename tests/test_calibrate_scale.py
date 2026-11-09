@@ -629,3 +629,71 @@ def test_a_cut_off_marking_invalidates_a_row(capsys, monkeypatch):
     assert "TOUCHES the frame border" in out, out
     assert "always present" not in out, (
         f"a cut-off pair must never be called a usable lane width:\n{out}")
+
+
+# ------------------------------ an ACCEPTED value must be verified too ----
+def _still_cam(frames):
+    class Cam:
+        def __init__(self):
+            self.i = 0
+
+        def read(self):
+            self.i += 1
+            return frames[self.i - 1] if self.i <= len(frames) else None
+
+        def close(self):
+            pass
+
+    return Cam()
+
+
+def test_an_accepted_value_is_still_checked_for_a_dash(monkeypatch):
+    """The gap that let a plausible-but-wrong number through.
+
+    The dash/presence and border-cutoff tests lived only in the REFUSAL
+    diagnostics, so a value that passed the main gate was never examined for
+    them. A STILL clip reports high support trivially - consecutive frames barely
+    differ - so the main gate is weakest exactly where it looks strongest.
+    """
+    from mav.tools import calibrate_scale as cs
+
+    # An edge that is always there, plus a dash that appears in only half the
+    # frames: 50% presence, well below the 80% an edge line must reach.
+    frames = []
+    for i in range(20):
+        f = np.zeros((360, 640, 3), dtype=np.uint8)
+        f[:, 500:530] = 255
+        if i % 2 == 0:
+            f[:, 220:250] = 255
+        frames.append(f)
+
+    monkeypatch.setattr(cs, "open_video", lambda _p: _still_cam(frames))
+    ok, notes = cs._verify_accepted_value(_StubDetector(_cfg(), (None, {})), "c.mp4", 280.0)
+    assert ok is False, f"a 60% presence pair must not pass, notes: {notes}"
+    assert any("DASH" in n for n in notes), notes
+
+
+def test_an_accepted_value_is_still_checked_for_a_cut_off_marking(monkeypatch):
+    from mav.tools import calibrate_scale as cs
+
+    frame = np.zeros((360, 640, 3), dtype=np.uint8)
+    frame[:, 0:40] = 255        # touches the left border: cut off
+    frame[:, 560:590] = 255
+
+    monkeypatch.setattr(cs, "open_video", lambda _p: _still_cam([frame] * 20))
+    ok, notes = cs._verify_accepted_value(_StubDetector(_cfg(), (None, {})), "c.mp4", 550.0)
+    assert ok is False, f"a cut-off pair must not pass, notes: {notes}"
+    assert any("TOUCHES the frame border" in n for n in notes), notes
+
+
+def test_a_genuinely_good_row_passes_verification(monkeypatch):
+    """The check must not reject a real edge pair, or nothing can ever calibrate."""
+    from mav.tools import calibrate_scale as cs
+
+    frame = np.zeros((360, 640, 3), dtype=np.uint8)
+    frame[:, 120:150] = 255     # left edge, fully inside
+    frame[:, 430:460] = 255     # right edge, fully inside
+
+    monkeypatch.setattr(cs, "open_video", lambda _p: _still_cam([frame] * 20))
+    ok, notes = cs._verify_accepted_value(_StubDetector(_cfg(), (None, {})), "c.mp4", 310.0)
+    assert ok is True, f"a clean pair must pass, notes: {notes}"

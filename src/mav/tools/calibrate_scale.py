@@ -516,6 +516,72 @@ def _explain_camera_motion(video_path: str) -> bool:
     return True
 
 
+def _verify_accepted_value(detector: LaneDetector, video_path: str,
+                           span_px: float) -> tuple[bool, list[str]]:
+    """Check the row that produced an ACCEPTED value: dash, or cut off?
+
+    This is the gap that let the first plausible-but-wrong number through. The
+    main path only checks spread and support; the dash/presence and border-cutoff
+    tests lived exclusively in the REFUSAL diagnostics, so a value that passed
+    the main gate was never examined for them. A still clip reports ~100% support
+    trivially (the scene barely changes between frames), which makes the main gate
+    much weaker than it looks - exactly when the extra check is needed.
+
+    Returns (ok, notes). `ok` is False when the evidence says the measured pair is
+    not the lane, so the caller must not present the number as a measurement.
+    """
+    from mav.perception.lane import lookahead_row
+
+    try:
+        cam = open_video(video_path)
+    except RuntimeError:
+        return True, []           # cannot check: do not claim failure either
+    counts: dict[int, int] = {}
+    clipped = 0
+    two = 0
+    frame_h = frame_w = 0
+    y_look = 0
+    try:
+        while True:
+            frame = cam.read()
+            if frame is None:
+                break
+            arr = np.asarray(frame)
+            frame_h, frame_w = int(arr.shape[0]), int(arr.shape[1])
+            y_look = int(round(lookahead_row(detector.cfg, frame_h)))
+            runs = _markings_at_row(arr, y_look)
+            counts[len(runs)] = counts.get(len(runs), 0) + 1
+            if len(runs) == 2:
+                two += 1
+                if runs[0][0] <= 1 or runs[1][1] >= frame_w - 1:
+                    clipped += 1
+    finally:
+        cam.close()
+    total = sum(counts.values())
+    if not total:
+        return True, []
+    notes: list[str] = []
+    ok = True
+    presence = two / total
+    notes.append(f"the lookahead row {y_look} showed exactly two markings in "
+                 f"{two}/{total} frames ({presence:.0%})")
+    if presence < 0.80:
+        ok = False
+        notes.append(
+            f"WARNING: a lane EDGE is painted along the whole track and appears in "
+            f"nearly every frame, but this pair appears in only {presence:.0%}. "
+            f"That is the signature of a DASH paired with an edge line, so the "
+            f"span is dash-to-edge, not edge-to-edge.")
+    if two and clipped / two > 0.25:
+        ok = False
+        notes.append(
+            f"WARNING: in {clipped} of the {two} two-marking frames a marking "
+            f"TOUCHES the frame border. A cut-off marking makes the span a LOWER "
+            f"BOUND, so the derived px_per_m would be too SMALL and every offset "
+            f"too large.")
+    return ok, notes
+
+
 def calibrate(video_path: str, *, lane_m: float = 0.50, profile: str | None = None) -> int:
     name = profile_name(profile)
     try:
@@ -624,6 +690,22 @@ def calibrate(video_path: str, *, lane_m: float = 0.50, profile: str | None = No
     print(f"  current          = {current.px_per_m:g}")
     print(f"  ratio            = {derived / current.px_per_m:.2f}x")
     print()
+    # The main gate above only checks spread and support. A STILL clip reports
+    # high support trivially, because consecutive frames barely differ, so the
+    # gate is weakest exactly where it looks strongest. Check the row that
+    # produced this number before presenting it as a measurement.
+    ok, notes = _verify_accepted_value(detector, video_path, span_px)
+    for note in notes:
+        print(f"  {note}")
+    print()
+    if not ok:
+        print("REFUSING to report a value.")
+        print()
+        print("The span above is not the lane width, so the derived px_per_m is")
+        print("not a measurement. Do not paste it.")
+        print()
+        _scan_rows_for_a_usable_lane(detector, video_path)
+        return 2
     # Resolution trap: px_per_m is PIXELS per metre, so the same wall is a
     # different number of pixels at a different frame width. A phone clip at
     # 854x480 gives a different answer than the robot camera at 640x360.
