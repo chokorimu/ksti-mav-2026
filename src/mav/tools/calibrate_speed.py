@@ -250,6 +250,15 @@ def sweep(
             if distance_m < 0:
                 print("  negative distance, skipping")
                 continue
+            if distance_m == 0.0:
+                # Zero distance at a real PWM is the deadband symptom: the motor
+                # hums and the car does not move. Say so, because the operator is
+                # otherwise left thinking the wiring is wrong.
+                print("  no movement at all.")
+                print("  If it HUMMED, this PWM is below the breakaway point -")
+                print("  measure it first:  --probe  (see PWM_DEADBAND)")
+                print("  If it was SILENT, PWM is not reaching the motor: check the")
+                print("  ENA/ENB jumpers are removed and the IN pins are wired.")
             points.append((float(pwm), distance_m / seconds))
             print(f"  = {distance_m / seconds:.3f} m/s")
     finally:
@@ -259,6 +268,76 @@ def sweep(
         finally:
             ser.close()
     return points
+
+
+def probe(
+    port: str,
+    k_current: float,
+    pwms: list[int],
+    *,
+    drive: str = "differential",
+    seconds: float = 1.5,
+    ask=input,
+    max_pwm: int = 255,
+) -> int | None:
+    """Ramp PWM until the car starts to move; return the first PWM that did.
+
+    This exists because of the deadband deadlock. A DC gearmotor does not turn
+    below a breakaway PWM: the windings hum at the PWM frequency while the rotor
+    stays put. With `PWM_DEADBAND = 0` the firmware maps the policy's 0.15 m/s to
+    PWM 45, which is far below that threshold - the motor buzzes and the car does
+    not move. Measuring the deadband FIRST is therefore not optional.
+
+    The ramp stops at the first "yes", so the car is never driven higher than it
+    needs to be. Returns None if it never moved (raise `max_pwm` or check wiring).
+
+    `max_pwm` is a PHYSICAL limit, not a speed: while the deadband is unknown the
+    m/s ceiling in configs/vehicle.yaml cannot be trusted, because it is computed
+    from an unmeasured model.
+    """
+    if not 0.0 < k_current:
+        raise SystemExit("--k-current must be > 0 (the MPS_TO_PWM currently flashed)")
+    if max_pwm > 255:
+        raise SystemExit("--max-pwm cannot exceed 255 (AVR analogWrite range)")
+
+    ser = _open_serial(port)
+    found: int | None = None
+    try:
+        time.sleep(2.0)  # opening the port resets the board; let it boot
+        for pwm in pwms:
+            if pwm > max_pwm:
+                print(f"\nstopping at the --max-pwm limit ({max_pwm})")
+                break
+            speed_cmd = pwm / k_current
+            print(f"\nPWM {pwm}  ({speed_cmd:.3f} m/s by the flashed model) "
+                  f"for {seconds:g} s")
+            ask("  press Enter to run it (e-stop in hand)...")
+            _hold(ser, drive, speed_cmd, seconds)
+            raw = ask("  did the wheels turn? [y/N] ").strip().lower()
+            if raw in ("y", "yes"):
+                found = pwm
+                break
+        ser.write(b"S\n")
+        ser.flush()
+    finally:
+        try:
+            ser.write(b"S\n")
+            ser.flush()
+        finally:
+            ser.close()
+
+    print("\n--- deadband ----------------------------------------------------")
+    if found is None:
+        print(f"  no movement up to PWM {min(max_pwm, max(pwms))}.")
+        print("  If the motor HUMS but does not turn, the deadband is above this:")
+        print("  re-run with a higher --max-pwm and a higher PWM list.")
+        print("  If it is silent, the PWM is not reaching it at all - check the")
+        print("  ENA/ENB jumpers are REMOVED and the IN pins are wired.")
+    else:
+        print(f"  first PWM that moved: {found}")
+        print(f"  set PWM_DEADBAND = {found}.0f in the sketch, then flash.")
+        print("  Then run the normal sweep (--pwm above this value) for MPS_TO_PWM.")
+    return found
 
 
 # ------------------------------------------------------------------------ cli ----
@@ -308,8 +387,10 @@ def main(argv: list[str] | None = None) -> int:
         "--pwm",
         type=int,
         nargs="+",
-        default=[50, 70, 90, 120, 150, 180],
-        help="PWM levels to sweep, low to high",
+        default=None,
+        help="PWM levels, low to high. Default for a sweep: 50 70 90 120 150 180. "
+        "Default for --probe: a denser 40..255 ramp, because the breakaway point "
+        "can be anywhere.",
     )
     ap.add_argument(
         "--drive",
@@ -327,11 +408,33 @@ def main(argv: list[str] | None = None) -> int:
         "so bypasses SafeActuator's clamp.",
     )
     ap.add_argument(
+        "--probe",
+        action="store_true",
+        help="measure PWM_DEADBAND only: ramp PWM until the wheels turn, then "
+        "stop. Run this FIRST - with PWM_DEADBAND = 0 the firmware maps the "
+        "policy's 0.15 m/s to PWM 45, which is below the breakaway point, so the "
+        "motor hums and the car never moves.",
+    )
+    ap.add_argument(
+        "--max-pwm",
+        type=int,
+        default=255,
+        help="physical PWM limit for --probe (default 255). A speed ceiling cannot "
+        "be used here: while the deadband is unknown, any m/s value is computed "
+        "from an unmeasured model.",
+    )
+    ap.add_argument(
         "--dry-run",
         action="store_true",
         help="print the sweep and a worked example without touching hardware",
     )
     args = ap.parse_args(argv)
+
+    if args.pwm is None:
+        # A probe has to find an unknown threshold, so it ramps densely and high.
+        # A sweep measures a known working range, so a few points are enough.
+        args.pwm = ([40, 60, 80, 100, 120, 140, 160, 180, 200, 220, 255]
+                    if args.probe else [50, 70, 90, 120, 150, 180])
 
     bad = [p for p in args.pwm if not 1 <= p <= PWM_MAX]
     if bad:
@@ -357,6 +460,24 @@ def main(argv: list[str] | None = None) -> int:
     if not args.port:
         print("--port is required for a real sweep (or use --dry-run)")
         return 2
+
+    if args.probe:
+        # Deadband probe: the m/s ceiling is deliberately NOT applied here. While
+        # PWM_DEADBAND is unknown, every m/s value is computed from an unmeasured
+        # model, so a "safe speed" ceiling would block the very PWMs needed to
+        # find the breakaway point - the deadlock this mode exists to break.
+        print("PROBE: ramp PWM until the wheels turn, then stop.")
+        print("The car WILL move. Clear floor, e-stop in hand, wheels on the floor")
+        print("(a lifted wheel turns at a lower PWM than a loaded one).")
+        found = probe(
+            args.port,
+            args.k_current,
+            args.pwm,
+            drive=args.drive,
+            seconds=args.seconds,
+            max_pwm=args.max_pwm,
+        )
+        return 0 if found is not None else 1
 
     ceiling = args.max_speed
     if ceiling is None:

@@ -189,3 +189,134 @@ def test_vehicle_max_speed_is_read_not_hardcoded():
         assert value == pytest.approx(0.3), (
             "configs/vehicle.yaml max_speed_mps changed; update this pin deliberately"
         )
+
+
+# ------------------------------------------------------- the deadband probe --
+def test_probe_stops_at_the_first_pwm_that_moves():
+    """The bug it fixes: PWM 45 hums but does not turn, so the car never moves.
+
+    With PWM_DEADBAND = 0 the firmware maps the policy's 0.15 m/s to PWM 45, well
+    below a DC gearmotor's breakaway point: the windings buzz at the PWM frequency
+    while the rotor stays put. The deadband has to be measured BEFORE anything else
+    can work, and a ramp that stops at the first "yes" is how you measure it.
+    """
+    # Two prompts per level: "press Enter" then "did the wheels turn?".
+    # It moves at the THIRD level.
+    prompts = []
+    move_at = {3}
+
+    def ask(prompt):
+        prompts.append(prompt)
+        if "did the wheels turn" not in prompt:
+            return ""                       # the "press Enter" prompt
+        level = sum(1 for p in prompts if "did the wheels turn" in p)
+        return "y" if level in move_at else "n"
+
+    written = []
+
+    class FakeSer:
+        def write(self, data):
+            written.append(data)
+
+        def flush(self):
+            pass
+
+        def close(self):
+            pass
+
+    import mav.tools.calibrate_speed as cs
+
+    real_open = cs._open_serial
+    cs._open_serial = lambda port: FakeSer()
+    try:
+        found = cs.probe("/dev/fake", 300.0, [40, 80, 120, 160], ask=ask, seconds=0.01)
+    finally:
+        cs._open_serial = real_open
+
+    assert found == 120, "the probe must report the first PWM that moved"
+    # It must stop there: never drive higher than needed.
+    assert len(prompts) == 6, "should have asked 3 times (2 prompts each) and stopped"
+    # And it must always end with a stop, so the car cannot keep rolling.
+    assert written[-1] == b"S\n"
+
+
+def test_probe_reports_failure_when_nothing_moves():
+    """No movement must be diagnosed, not silently returned as success."""
+    import mav.tools.calibrate_speed as cs
+
+    class FakeSer:
+        def write(self, data):
+            pass
+
+        def flush(self):
+            pass
+
+        def close(self):
+            pass
+
+    real_open = cs._open_serial
+    cs._open_serial = lambda port: FakeSer()
+    try:
+        found = cs.probe("/dev/fake", 300.0, [40, 80], ask=lambda _p: "n", seconds=0.01)
+    finally:
+        cs._open_serial = real_open
+    assert found is None
+
+
+def test_probe_respects_the_physical_pwm_limit():
+    """A speed ceiling cannot bound a probe: the m/s value comes from an
+    unmeasured model. The physical PWM limit is what actually protects the motor."""
+    import mav.tools.calibrate_speed as cs
+
+    asked = []
+
+    class FakeSer:
+        def write(self, data):
+            pass
+
+        def flush(self):
+            pass
+
+        def close(self):
+            pass
+
+    real_open = cs._open_serial
+    cs._open_serial = lambda port: FakeSer()
+    try:
+        cs.probe("/dev/fake", 300.0, [40, 200, 255], ask=lambda p: asked.append(p) or "n",
+                 seconds=0.01, max_pwm=100)
+    finally:
+        cs._open_serial = real_open
+    # 200 and 255 are above the limit, so only PWM 40 is offered.
+    assert len(asked) == 2, f"only PWM 40 should have been run, prompts: {asked}"
+
+
+def test_probe_rejects_an_impossible_pwm_limit():
+    import mav.tools.calibrate_speed as cs
+
+    with pytest.raises(SystemExit, match="cannot exceed 255"):
+        cs.probe("/dev/fake", 300.0, [40], max_pwm=300, seconds=0.01)
+
+
+def test_probe_default_ramp_reaches_high_enough_to_find_a_deadband():
+    """The default sweep tops out at 180; a probe must go to the PWM ceiling.
+
+    A motor that needs PWM 220 to break away would be unreachable with the sweep's
+    default list, and the operator would conclude the wiring was wrong.
+    """
+    import mav.tools.calibrate_speed as cs
+
+    captured = {}
+
+    def fake_probe(port, k, pwms, **kw):
+        captured["pwms"] = pwms
+        return 120
+
+    real = cs.probe
+    cs.probe = fake_probe
+    try:
+        cs.main(["--port", "/dev/fake", "--probe"])
+    finally:
+        cs.probe = real
+    assert max(captured["pwms"]) == 255, "the probe ramp must reach the ceiling"
+    assert min(captured["pwms"]) <= 60, "it must start low enough to be safe"

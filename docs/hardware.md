@@ -321,6 +321,50 @@ If OpenCV lacks the MPEG-4 encoder on this image, the recorder falls back to
 MJPG in a `.avi` beside the requested path and says so - it does not abort a
 session the camera is already delivering to.
 
+### Symptom: the motor HUMS but the car does not move
+
+This is the **deadband**, and it is the most likely first symptom on a fresh
+build. A DC gearmotor does not turn below a breakaway PWM: the windings buzz at the
+PWM frequency while the rotor stays put.
+
+With `MPS_TO_PWM = 300` and `PWM_DEADBAND = 0`, the policy's 0.15-0.3 m/s maps to:
+
+| command | PWM | duty | volts into the motor (3S through an L298N, ~8.5 V) |
+|---|---|---|---|
+| 0.15 m/s | 45 | 18 % | ~1.5 V |
+| 0.30 m/s | 90 | 35 % | ~3.0 V |
+
+1.5 V is far below what a geared motor needs to break away, so it hums and holds.
+**Measure the deadband first:**
+
+```bash
+PYTHONPATH=src python -m mav.tools.calibrate_speed --port /dev/ttyCH341USB0 \
+    --k-current 300 --probe --seconds 1.5
+```
+
+It ramps PWM from 40 to 255 in steps and asks "did the wheels turn?" after each,
+stopping at the first yes. Then set that value:
+
+```c
+const float PWM_DEADBAND = 120.0f;   // measured, not guessed
+```
+
+and reflash. **Only then** run the normal sweep for `MPS_TO_PWM`, using PWM values
+above the deadband.
+
+`--probe` deliberately does **not** apply the `max_speed_mps` ceiling: while the
+deadband is unknown, every m/s value is computed from an unmeasured model, so a
+speed ceiling would block the very PWMs needed to find the breakaway point. The
+physical `--max-pwm` limit (default 255) is what protects the motor there.
+
+**If the motor is SILENT rather than humming**, PWM is not reaching it at all -
+that is wiring, not calibration. Check, in this order:
+- the **ENA/ENB jumpers are removed** on both L298Ns (with them in, the channel is
+  permanently full-on and PWM does nothing);
+- IN1/IN2 (and IN3/IN4) are actually wired to the pins in the table above;
+- the battery is connected to the L298N **+12V** terminal, and all grounds share
+  one node.
+
 ### Procedure
 Safety first: e-stop in hand and tested, motors running only on the floor, a clear
 straight run of at least 4 m, the same surface for every point, and the battery
