@@ -121,6 +121,27 @@ int main() {
     CHECK(mav::speed_to_pwm(5.0f, 200.0f, 40.0f, 255) == 255);
     CHECK(mav::speed_to_pwm(-5.0f, 200.0f, 40.0f, 255) == -255);
   }
+  {  // the EXACT bytes SerialActuator writes must parse (host<->firmware contract)
+    // SerialActuator builds `f"W {left:.3f} {right:.3f}\n"`. If that stops
+    // matching the parser, the robot receives valid-looking traffic and never
+    // moves - which is exactly the failure a mismatched reference sketch caused
+    // on 10 Nov 2026 (`sscanf("M %d %d")` against "W 0.277 0.263").
+    LineProtocol p;
+    CHECK(p.feed("W 0.277 0.263", 1000));
+    CHECK(p.last_verb() == 'W');
+    CHECK(!p.safe_required());
+    const float l = p.command().a;
+    const float r = p.command().b;
+    CHECK(l > 0.2765f && l < 0.2775f);
+    CHECK(r > 0.2625f && r < 0.2635f);
+    // Signed, and the sign must survive: reverse is a real command.
+    CHECK(p.feed("W -0.300 -0.300", 1010));
+    CHECK(p.command().a < -0.2995f && p.command().a > -0.3005f);
+    // "S" must stop immediately rather than wait for the watchdog, because the
+    // host's SafeActuator.stop() writes it and expects the car to be stopped.
+    CHECK(p.feed("S", 1020));
+    CHECK(p.safe_required());
+  }
   if (failures == 0) {
     std::printf("all MavCore protocol tests passed\n");
     return 0;

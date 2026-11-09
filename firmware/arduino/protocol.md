@@ -49,6 +49,13 @@ S                  # stop
 
 - If no valid line arrives within `WATCHDOG_MS` (default 500 ms), the firmware
   stops (same output state as `S`).
+- **`WATCHDOG_MS` must be several times the host's command period.** The host
+  sends at `robot.rate_hz` (20 Hz = 50 ms, measured ~31 ms per loop). A timeout
+  shorter than the period makes the motors run for a few tens of milliseconds and
+  then coast until the next command: the car buzzes, its effective speed depends
+  on host jitter instead of on the command, and any speed measurement is garbage.
+  A reference sketch seen on 10 Nov 2026 used 30 ms against a ~31 ms loop - do not
+  copy that value. `tests/test_firmware_sketches.py` pins the margin.
 - This is the second of three stop paths. The first is the hardware emergency
   stop (cuts motor power, independent of any software); the third is the
   host-side `SafeActuator` command timeout (0.3 s). No single path may be the

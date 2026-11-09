@@ -9,6 +9,10 @@ Working language: English. Keep Indonesian names of official documents as they a
 If a task touches an item marked **[A#]** in the rules, do not guess. Ask the user.
 
 ## Environment
+- **The Arduino is a Nano (ATmega328P), not an Uno** (corrected 10 Nov 2026). It
+  drives **2x L298N / 4 motors**; the real pin map is in `docs/hardware.md` and in
+  `firmware/arduino/prototype/src/prototype.ino`. Never assume the pin map: it was
+  wrong once already, and the sketch then drove the wrong pins.
 - **Jetson Orin Nano: SSH only, no display.** Do not use `cv2.imshow`, GUI code, or tools that need a screen. To inspect results, save images/video or use an MJPEG stream in dev mode only.
 - **JetPack 6.2.3 (L4T R36.5, Ubuntu 22.04 base).** Version-dependent facts (Python, CUDA, TensorRT, OpenCV build options) must be verified on the device and recorded in `docs/hardware.md`; do not assume them. Use NVIDIA aarch64 packages built for JetPack 6, never x86 wheels.
 - Verified on the Jetson: Python 3.10.12, OpenCV 4.8.0 (GStreamer yes, CPU only), CUDA 12.6, cuDNN 9.3, TensorRT 10.3 runtime. TensorRT dev tools (`trtexec`, Python bindings) are not confirmed yet. Details in `docs/hardware.md`.
@@ -136,6 +140,14 @@ tests/
     — because a DC motor does not turn below a breakaway PWM, and a single gain
     fitted at full throttle overstates the speed at the 0.15-0.3 m/s the policy
     actually uses. `speed == 0` returns 0 so "stop" really coasts.
+- `firmware/arduino/prototype/`: rewired 10 Nov 2026 to the robot's real hardware
+    (Nano, 2x L298N, 4 motors, the user's pin map). Speed is **proportional**
+    (`MPS_TO_PWM` + `PWM_DEADBAND` via `mav::speed_to_pwm()`); the reference sketch
+    it replaced pinned every command to PWM 255, which silently disabled the
+    policy's corner speed schedule, the `max_speed_mps` ceiling and the
+    calibration. Per-motor `INV_*` flags flip direction only, never magnitude.
+    The watchdog must stay several times the command period: a 30 ms timeout
+    against a ~31 ms loop makes the motors stutter between commands.
 - `src/mav/tools/calibrate_speed.py`: the measurement procedure in code. Streams
     a PWM sweep over serial (the 500 ms watchdog makes sweeping by hand
     impossible), asks for each distance, and least-squares fits both constants.

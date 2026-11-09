@@ -415,6 +415,45 @@ sketches compile, and `src/mav/tools/calibrate_speed.py --dry-run` prints a swee
    **Still blocked on the operator**: the sweep itself needs the car on a clear
    floor with the e-stop in hand. Nothing can be measured from here.
 
+## Rewire to the robot's real hardware (10 Nov 2026) — three bugs in the reference sketch
+The user supplied the Arduino sketch actually running on the robot. It did not match
+this repo in four ways, and three of them would have stopped the car dead:
+
+1. **Protocol mismatch — the robot would never move.** The reference parses
+   `sscanf(line, "M %d %d")` (-255..255). Our host writes `W 0.277 0.263` (m/s,
+   decimals) per `protocol.md`. `sscanf` returns 0, `drive()` is never called, the
+   watchdog holds `drive(0, 0)` forever. Symptom identical to `MPS_TO_PWM = 0`,
+   different cause. **Kept the m/s protocol** (user decision): it preserves the
+   vehicle-agnostic command in AGENTS.md and keeps `MPS_TO_PWM` meaningful.
+2. **`FULL_PWM = 255` threw away speed control.** Magnitude was ignored, so
+   `W 0.15` and `W 0.30` moved identically: the policy's corner speed schedule,
+   the `max_speed_mps` ceiling and the new speed calibration all did nothing.
+   Replaced with proportional PWM through `mav::speed_to_pwm()`.
+3. **`TIMEOUT_MS = 30` against a ~31 ms control loop.** The motors ran for 30 ms,
+   coasted until the next command, and repeated: the car buzzes, the effective
+   speed depends on host jitter, and a speed measurement is meaningless. The
+   sketch's own comment said `Saat dipakai Jetson: 300`. MavCore's 500 ms default
+   is used instead, and `tests/test_firmware_sketches.py` now pins the margin
+   (>= 4x the command period).
+4. **Wrong board and pin map.** The robot is a **Nano**, not the Uno recorded on
+   7 Nov, and the real harness is **2x L298N / 4 motors** on pins 3,4,5,11,A2,A3
+   and 9,A0,7,10,8,A1 with a fan on 6. The old map drove two channels on 2/4/7/8,
+   i.e. the wrong pins. `platformio.ini` now builds `nanoatmega328new` (fallback
+   `nanoatmega328` for the old bootloader, documented in the ini).
+
+Kept from the reference: the per-motor `INV_*` direction flags (a reversed motor
+must be reversed, not also made slower - `set_motor` flips the sign and takes
+`abs()` for the duty cycle) and the fan pin driven LOW at boot.
+
+Verified: prototype compiles for the Nano (4830 B flash / 280 B RAM), full suite
+304 passed, MavCore g++ suite passes, and a g++ test now feeds the host's exact
+`W 0.277 0.263` bytes through the parser so the two sides cannot drift apart
+again. Each new assertion was mutation-checked (FULL_PWM back, EN on a non-PWM
+pin, duplicate pin, 30 ms watchdog: all four caught).
+**Still needs the operator**: `MPS_TO_PWM` / `PWM_DEADBAND` are physical
+measurements (procedure in hardware.md), and `final`'s pin map was NOT in the
+reference sketch - it is still unverified.
+
 ## Next tasks (in order)
 
 1. **T2 follow-up — BLOCKED on a user decision (asked 7 Nov 2026).** The policy cannot

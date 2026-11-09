@@ -121,3 +121,140 @@ def test_the_e_stop_split_is_documented_where_it_matters():
     protocol = (FW / "protocol.md").read_text()
     assert "hardware emergency" in protocol.lower()
     assert "watchdog" in protocol.lower()
+
+
+# ---------------------------------------------------- the 10 Nov 2026 rewire --
+# The robot turned out to be a Nano with 2x L298N, and its own pin map. The
+# sketch used to carry a two-channel Uno map on pins 2/4/7/8, which is the wrong
+# pins on that hardware. These tests pin the map that is actually wired.
+import re as _re
+
+
+def _const_ints(source):
+    """{name: value} for `const int NAME = ...;`, with A0-A7 resolved to 14-21.
+
+    The ATmega328P maps the analog pins onto digital numbers 14+, which is what
+    pinMode()/digitalWrite() actually use, so resolving them here lets the
+    duplicate check work on real pin numbers instead of on names.
+    """
+    out = {}
+    for line in source.splitlines():
+        stripped = line.strip()
+        m = _re.match(r"const\s+int\s+(\w+)\s*=\s*([^;]+);", stripped)
+        if not m:
+            continue
+        raw = m.group(2).strip()
+        analog = _re.fullmatch(r"A(\d)", raw)
+        out[m.group(1)] = 14 + int(analog.group(1)) if analog else int(raw)
+    return out
+
+
+def test_prototype_pin_map_has_no_duplicates():
+    """Two functions on one pin means one of them silently does nothing."""
+    pins = _const_ints(PROTOTYPE)
+    used = {k: v for k, v in pins.items() if k.startswith("PIN_")}
+    assert used, "no PIN_ constants found in prototype.ino"
+    seen = {}
+    for name, num in used.items():
+        assert num not in seen, f"{name} and {seen[num]} both use pin {num}"
+        seen[num] = name
+
+
+def test_every_enable_pin_can_actually_do_pwm():
+    """analogWrite() on a non-PWM pin is a plain on/off: speed control vanishes.
+
+    On the ATmega328P only these digital pins are PWM-capable.
+    """
+    nano_pwm = {3, 5, 6, 9, 10, 11}
+    pins = _const_ints(PROTOTYPE)
+    enables = {k: v for k, v in pins.items() if "EN" in k}
+    assert len(enables) == 4, f"expected 4 enable pins (2x L298N), got {enables}"
+    for name, num in enables.items():
+        assert num in nano_pwm, (
+            f"{name} = pin {num} is not PWM-capable; analogWrite() would be on/off"
+        )
+
+
+def _strip_comments(source, marker="//"):
+    """Code only. Comments explain history, and history mentions the old values.
+
+    Without this, a comment saying "this was FULL_PWM until 10 Nov" fails a test
+    that forbids FULL_PWM - the test would then punish good documentation.
+    """
+    return "\n".join(
+        line.split(marker)[0] for line in source.splitlines()
+    )
+
+
+def test_prototype_targets_the_nano():
+    """The robot is a Nano. `board = uno` uploads with the wrong settings."""
+    ini = (FW / "prototype" / "platformio.ini").read_text()
+    active = _strip_comments(ini, ";")
+    assert "nanoatmega328" in active, "prototype must build for the Nano"
+    assert "board = uno" not in active, (
+        "the ini comment may mention the old board, but the setting must not be it"
+    )
+
+
+def test_speed_is_proportional_not_pinned_to_full():
+    """FULL_PWM would throw away speed control, and with it the whole model.
+
+    The reference sketch this firmware replaced sent 255 for ANY non-zero
+    command. That makes the policy's corner speed schedule, the max_speed_mps
+    ceiling and MPS_TO_PWM/PWM_DEADBAND all do nothing - the car is always at
+    full throttle. Speed must come from the command.
+    """
+    code = _strip_comments(PROTOTYPE)
+    assert "FULL_PWM" not in code, (
+        "prototype.ino must scale PWM by the commanded speed, not saturate it"
+    )
+    body = _function_body(PROTOTYPE, "int mps_to_pwm(float mps)")
+    assert "speed_to_pwm" in body
+    # And the measured constants must reach it.
+    assert "MPS_TO_PWM" in body
+    assert "PWM_DEADBAND" in body
+
+
+def test_the_direction_invert_does_not_change_the_magnitude():
+    """A reversed motor must be reversed, not also made slower."""
+    body = _function_body(PROTOTYPE, "void set_motor(int en_pin, int in1_pin, int in2_pin, int pwm, bool invert)")
+    assert "if (invert) pwm = -pwm;" in body
+    # The duty cycle comes from abs(pwm) - sign already consumed by the IN pins.
+    assert "abs(pwm)" in body
+
+
+def test_watchdog_outlives_the_control_loop():
+    """The bug this guards: TIMEOUT_MS = 30 against a ~31 ms control loop.
+
+    With a timeout shorter than the command period the motors get PWM for a few
+    tens of milliseconds, then the watchdog drops them to 0, then the next
+    command arrives: the car buzzes and its effective speed is a fraction of
+    what was asked. It also makes a speed measurement meaningless, because the
+    duty cycle depends on host jitter rather than on the command.
+
+    The control loop runs at `robot.rate_hz` (20 Hz -> 50 ms), and the measured
+    loop is ~31 ms, so the watchdog needs real headroom, not a near miss.
+    """
+    core = (FW / "lib" / "MavCore" / "src" / "MavCore.h").read_text()
+    m = _re.search(r"#define\s+MAV_WATCHDOG_MS\s+(\d+)", core)
+    assert m, "MAV_WATCHDOG_MS not found"
+    timeout_ms = int(m.group(1))
+
+    import yaml
+
+    cfg = yaml.safe_load((REPO / "configs" / "prototype.yaml").read_text())
+    hz = float((cfg.get("robot") or {}).get("rate_hz", 20.0))
+    period_ms = 1000.0 / hz
+    assert timeout_ms >= 4 * period_ms, (
+        f"watchdog {timeout_ms} ms is too close to the {period_ms:.0f} ms command "
+        "period; the motors would stutter between commands"
+    )
+
+
+def test_the_sketches_do_not_reimplement_the_speed_map():
+    """One implementation, in MavCore, where the laptop can test it."""
+    for source, name in ((PROTOTYPE, "prototype"), (FINAL, "final")):
+        body = _function_body(source, "int mps_to_pwm(float mps)")
+        assert "* MPS_TO_PWM" not in body, (
+            f"{name}.ino still does the arithmetic itself instead of calling MavCore"
+        )

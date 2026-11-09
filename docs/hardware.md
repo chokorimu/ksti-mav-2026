@@ -35,12 +35,22 @@ Only facts confirmed by the user are in "Confirmed". Everything else is a questi
 - Motor/servo control path: **Arduino over USB serial** (user decision, 7 Nov 2026).
   Jetson stays the CV brain; the Arduino drives the motor driver and servo. The Jetson
   40-pin header is NOT used for actuators (3.3 V logic, mA-level current, not real-time).
-  The Arduino firmware goes in `firmware/arduino/` (compiles for the Uno; the speed
-  calibration and the servo range are still open).
-- **MCU: Arduino Uno** (user, 7 Nov 2026). ATmega328P, 16 MHz, 5 V logic, 2 KB RAM,
-  31.5 KB flash. USB serial through the ATmega16U2, so the 115200 baud in
-  `firmware/arduino/protocol.md` matters on this board. Verified firmware size:
-  prototype 4966 B flash / 276 B RAM, final 5532 B / 317 B.
+  The Arduino firmware goes in `firmware/arduino/` (the speed calibration and the
+  servo range are still open).
+- **MCU: Arduino NANO** (corrected 10 Nov 2026 - the robot's own sketch says Nano;
+  it was recorded as Uno on 7 Nov 2026). ATmega328P, 16 MHz, 5 V logic, 2 KB RAM,
+  30 KB flash usable. USB serial through a bridge chip (ATmega16U2 on a genuine
+  board, CH340 on most clones), so the 115200 baud in
+  `firmware/arduino/protocol.md` matters. `platformio.ini` now builds
+  `board = nanoatmega328new`; if an upload times out on sync, the board has the
+  OLD bootloader (57600 baud) - switch to `board = nanoatmega328`. Only the upload
+  changes: both are the same chip. Verified firmware size: prototype 4830 B flash /
+  280 B RAM.
+- **Motor drivers: 2x L298N** (10 Nov 2026). The robot carries two, one per axle
+  pair, driven in parallel: channel A of BOTH is the left pair, channel B of BOTH
+  is the right pair. Four motors, one per wheel, so the prototype really is skid
+  steering by speed difference. The old note below (one L298N, two channels)
+  described the plan, not the robot.
 - **Motor driver: L298N** (user, 7 Nov 2026). Dual H-bridge, two channels (A and B),
   each channel IN1/IN2 + ENA. Logic is 5 V, same as the Uno: connect IN/EN directly,
   no level shifter. The L298N drops ~2-3 V across its outputs, so the motors see
@@ -54,11 +64,27 @@ Only facts confirmed by the user are in "Confirmed". Everything else is a questi
   node. Without it nothing works, and it is the number one wiring bug.
 - **Remove the ENA/ENB jumpers** on the L298N, otherwise both channels run at full
   speed and PWM speed control does nothing.
-- **Prototype wiring (4 motors as 2 channels):** both left wheels on L298N channel A,
-  both right wheels on channel B; skid steering is the speed difference between them.
-  Pin map (our choice, 7 Nov 2026, wire exactly like this):
-  ENA=3, IN1=2, IN2=4 (left) / ENB=11, IN3=7, IN4=8 (right). ENA/ENB use the Uno's
-  ~490 Hz PWM pins; pins 5/6 (~980 Hz) deliberately unused.
+- **Prototype wiring (2x L298N, 4 motors) - THE ROBOT'S ACTUAL PIN MAP (10 Nov 2026):**
+
+  | Driver 1 | pin | Driver 2 | pin |
+  |---|---|---|---|
+  | ENA (left) | 3 | ENA2 (left) | 9 |
+  | IN1 | 4 | IN1_2 | A0 |
+  | IN2 | 5 | IN2_2 | 7 |
+  | ENB (right) | 11 | ENB2 (right) | 10 |
+  | IN3 | A2 | IN3_2 | 8 |
+  | IN4 | A3 | IN4_2 | A1 |
+
+  Fan on pin 6 (wired, unused, driven LOW at boot).
+  All four enable pins (3, 11, 9, 10) are hardware-PWM pins on the ATmega328P; an EN
+  pin on a non-PWM pin would make `analogWrite()` a plain on/off and silently lose
+  speed control. A0/A1/A2/A3 are analog pins used as digital outputs, which is legal.
+  The earlier map (ENA=3, IN1=2, IN2=4 / ENB=11, IN3=7, IN4=8) was a design choice
+  that never matched this harness: it drove only two channels and used pins 2/4/7/8.
+  **Speed is proportional** (`MPS_TO_PWM` + `PWM_DEADBAND`), not pinned to 255: the
+  reference sketch this replaced sent full PWM for any non-zero command, which made
+  the policy's corner speed schedule, the `max_speed_mps` ceiling and the calibration
+  all do nothing.
 - **Final wiring:** rear motor on channel A (ENA=3, IN1=2, IN2=4), steering servo
   signal on pin 5. The Servo library takes over Timer1, so PWM on pins 9/10 stops
   working - not needed on this robot.
