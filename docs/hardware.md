@@ -102,6 +102,46 @@ Only facts confirmed by the user are in "Confirmed". Everything else is a questi
   docs/research-plan.md).
 - `scripts/setup_jetson.sh` runs on the Jetson (PyYAML 5.4.1 comes from the system packages).
 
+## The CH340 Nano clone does not appear on the Jetson (confirmed 10 Nov 2026)
+
+**Symptom.** `lsusb` shows the board, but there is no device node:
+
+```
+$ lsusb | grep -i 1a86
+Bus 001 Device 010: ID 1a86:7523 QinHeng Electronics CH340 serial converter
+$ ls /dev/ttyACM* /dev/ttyUSB*
+(nothing)
+```
+
+So the chip enumerates on USB and the **driver does not bind**. It is not a cable,
+not a permission problem (the user is in `dialout`), and not the camera.
+
+**Cause.** L4T R36 (JetPack 6) does not ship the `ch341` kernel module, which is
+what drives the CH340. `sudo modprobe ch341` answers
+`FATAL: Module ch341 not found in directory /lib/modules/<version>-tegra`. This is a
+known gap in the JetPack 6 image, not a fault on this robot.
+
+**Options, cheapest first.**
+
+1. **Use a CP2102 or FTDI adapter** (a USB-serial cable with a different chip) and
+   wire it to the Nano's TX/RX, or use a Nano with that bridge. `cp210x` and
+   `ftdi_sio` are commonly present in L4T already - check with
+   `ls /lib/modules/$(uname -r)/kernel/drivers/usb/serial/`. No kernel work, works
+   immediately. Note the Nano still needs its own USB power in this arrangement.
+2. **Build the `ch341` module** against the running kernel:
+   `sudo apt install nvidia-l4t-kernel-headers`, then build
+   `drivers/usb/serial/ch341.c` from the matching kernel source. Expect friction:
+   L4T images frequently lack `Module.symvers`, and the build then fails at modpost
+   with `"usb_register_driver" undefined`. If that happens, the module cannot be
+   linked and option 1 is the answer.
+3. **Prebuilt third-party modules** (e.g. the JetsonHacks `installCH341` script).
+   These are built for one exact kernel version and fail with `Exec format error`
+   on any other. Verify `uname -r` matches before trusting one.
+
+**Do not** spend a competition week on this. A different USB-serial chip costs a few
+dollars and removes the problem entirely; the module build is a kernel-maintenance
+task with a real chance of not linking at all.
+
 ## Startup troubleshooting on the Jetson
 
 **`ModuleNotFoundError: No module named 'serial'`** (hit 10 Nov 2026). `pyserial`
@@ -158,6 +198,15 @@ reporting `1280 x 720` in its log is the capture side, not the frame Python sees
 - Power mode: `MAXN_SUPER` (mode id 2), the highest power mode.
 - CSI camera alive: `nvarguscamerasrc` works (user, 7 Nov 2026). Exact module still to identify.
 - Not seen in the package list (may be missing, verify): TensorRT development packages, `python3-libnvinfer`, `trtexec`, `nvcc`.
+- **OS: L4T R36.5.0 (JetPack 6.2.3)**, confirmed 10 Nov 2026 from `/etc/nv_tegra_release`.
+- **`trtexec` and `nvcc` are absent** (confirmed 10 Nov 2026). This is FINE for now: no
+  code in `src/` uses TensorRT, CUDA or a model - `models/` holds only `.gitkeep`, and
+  the `model: { path: ... }` keys in the configs are read by nobody. Lane, cone and
+  checkpoint detection are numpy-only. JetPack's dev tools are only needed if a neural
+  network is added for `final` later. **The `nvidia-jetpack` metapackage is a multi-GB
+  download and is NOT a prerequisite for anything currently working.**
+- The user is in the `dialout` group (confirmed 10 Nov 2026), so serial access rights
+  are not the problem.
 
 ## To verify next
 ```bash
