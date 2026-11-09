@@ -221,3 +221,96 @@ def test_no_cone_tracker_means_no_counting():
     sm = SM()
     d("f", sm)
     assert sm.cp == 0
+
+
+# ---------------------------------------------------- startup, before the loop --
+def test_autodetect_uses_the_single_board(monkeypatch):
+    """AGENTS.md forbids hardcoding serial port names, and the ACM/USB split
+    means any hardcoded name is wrong on half the boards."""
+    import mav.robot as robot
+
+    monkeypatch.setattr(robot, "list_serial_ports", lambda: ["/dev/ttyUSB0"])
+    assert robot._autodetect_port("configs/prototype.yaml") == "/dev/ttyUSB0"
+
+
+def test_autodetect_refuses_when_nothing_is_plugged_in(monkeypatch):
+    import mav.robot as robot
+
+    monkeypatch.setattr(robot, "list_serial_ports", lambda: [])
+    with pytest.raises(SystemExit, match="no Arduino was found"):
+        robot._autodetect_port("configs/prototype.yaml")
+
+
+def test_autodetect_refuses_to_guess_between_two_boards(monkeypatch):
+    """Picking the wrong port would send motor commands to a random device."""
+    import mav.robot as robot
+
+    monkeypatch.setattr(robot, "list_serial_ports", lambda: ["/dev/ttyUSB0", "/dev/ttyACM0"])
+    with pytest.raises(SystemExit) as exc:
+        robot._autodetect_port("configs/prototype.yaml")
+    assert "2 serial devices" in str(exc.value)
+    assert "--port" in str(exc.value)
+
+
+def test_autodetect_reports_missing_pyserial_not_a_traceback(monkeypatch):
+    import mav.robot as robot
+    from mav.io.actuator import SerialUnavailable
+
+    def boom():
+        raise SerialUnavailable("pyserial is not installed")
+
+    monkeypatch.setattr(robot, "list_serial_ports", boom)
+    with pytest.raises(SystemExit, match="pyserial is not installed"):
+        robot._autodetect_port("configs/prototype.yaml")
+
+
+def test_first_frame_proves_the_camera_delivers():
+    """A camera that opens but never produces a frame looks like a robot that
+    simply ignores its commands, so startup waits for one real frame."""
+    import numpy as np
+
+    import mav.robot as robot
+
+    class Cam:
+        def __init__(self, frames):
+            self.frames = list(frames)
+
+        def read(self):
+            return self.frames.pop(0) if self.frames else None
+
+    frame = np.zeros((360, 640, 3), dtype=np.uint8)
+    assert robot._first_frame(Cam([None, None, frame]), timeout_s=1.0) is frame
+
+
+def test_first_frame_gives_up_instead_of_hanging():
+    import mav.robot as robot
+
+    class Dead:
+        def read(self):
+            return None
+
+    assert robot._first_frame(Dead(), timeout_s=0.05) is None
+
+
+def test_serial_is_checked_before_the_camera_opens(monkeypatch):
+    """The 10 Nov 2026 crash, pinned.
+
+    On the Jetson the camera opened fine, then `open_serial_port()` raised
+    `ModuleNotFoundError: No module named 'serial'`. The traceback landed right
+    under the Argus log, so a missing Python package read as a camera fault.
+    With an explicit --port (or a `port:` in config) the autodetect helper does
+    not run, so the check has to be its own step before the camera.
+    """
+    import sys
+
+    import mav.io.camera as camera
+    import mav.robot as robot
+
+    opened = []
+    monkeypatch.setitem(sys.modules, "serial", None)   # venv without pyserial
+    monkeypatch.setenv("MAV_PROFILE", "prototype")
+    monkeypatch.setattr(camera, "open_video", lambda path: opened.append(path))
+
+    with pytest.raises(SystemExit, match="pyserial is not installed"):
+        robot.main(["--port", "/dev/ttyUSB0", "--video", "whatever.mp4"])
+    assert opened == [], "the camera was opened before the dependency was checked"

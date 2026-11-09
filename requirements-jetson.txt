@@ -1,3 +1,9 @@
 pyyaml
+# pyserial: the Arduino link (mav.io.actuator.open_serial_port). It is imported
+# lazily, so nothing fails at install time - the robot just dies at startup with
+# `ModuleNotFoundError: No module named 'serial'`, right after the camera log, so
+# it reads like a camera fault. It cost a debugging session on 10 Nov 2026.
+# Not pulled in by JetPack, and platformio (which depends on it) is dev-only.
+pyserial
 # OpenCV, numpy, TensorRT, PyTorch: pakai yang dari JetPack/NVIDIA,
 # jangan pip install versi x86. Versi menunggu hasil cek JetPack.

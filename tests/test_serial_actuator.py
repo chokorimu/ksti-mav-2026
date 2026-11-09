@@ -124,3 +124,96 @@ def test_safe_actuator_timeout_stops():
     safe.tick()
     assert port.lines[-1] == "S"
     assert safe.timed_out
+
+
+# ------------------------------------------------------- the pyserial crash --
+# The robot died on the Jetson on 10 Nov 2026 with
+#     ModuleNotFoundError: No module named 'serial'
+# raised from open_serial_port() AFTER the CSI camera had already opened, so the
+# traceback sat directly under the Argus log and read like a camera fault. The
+# cause was duller: pyserial was never declared in requirements-jetson.txt (the
+# laptop only had it as a platformio transitive dependency).
+import sys
+
+import mav.io.actuator as A
+
+
+@pytest.fixture
+def no_pyserial(monkeypatch):
+    """Make `import serial` fail, the way a venv without pyserial behaves.
+
+    sys.modules[name] = None is the documented way to force an ImportError;
+    monkeypatch restores the real module afterwards.
+    """
+    monkeypatch.setitem(sys.modules, "serial", None)
+
+
+def test_missing_pyserial_names_the_install_command(no_pyserial):
+    """A bare ModuleNotFoundError sends the operator looking at the wrong thing."""
+    with pytest.raises(A.SerialUnavailable) as exc:
+        A.require_serial()
+    msg = str(exc.value)
+    assert "pyserial" in msg
+    assert "pip install pyserial" in msg
+    # It must say explicitly that this is not the camera: the camera opened first.
+    assert "NOT a camera" in msg
+
+
+def test_missing_pyserial_is_not_an_oserror(no_pyserial):
+    """robot.main catches OSError around the loop for mid-run cable faults.
+
+    A startup dependency problem must not be reported as a runtime fault.
+    """
+    with pytest.raises(A.SerialUnavailable):
+        A.require_serial()
+    assert not issubclass(A.SerialUnavailable, OSError)
+
+
+def test_open_serial_port_wraps_the_missing_import(no_pyserial):
+    with pytest.raises(A.SerialUnavailable, match="pyserial is not installed"):
+        A.open_serial_port("/dev/ttyACM0")
+
+
+def test_list_serial_ports_wraps_the_missing_import(no_pyserial):
+    with pytest.raises(A.SerialUnavailable, match="pyserial is not installed"):
+        A.list_serial_ports()
+
+
+def test_bad_port_reports_which_ports_do_exist():
+    """Wrong port is the next failure: genuine Nano is ACM, a clone is USB."""
+    with pytest.raises(A.SerialUnavailable) as exc:
+        A.open_serial_port("/dev/definitely-not-a-real-port")
+    msg = str(exc.value)
+    assert "cannot open serial port" in msg
+    assert "definitely-not-a-real-port" in msg
+    # Either the real ports, or an explicit "nothing is plugged in".
+    assert "Ports that do exist" in msg or "No serial ports found" in msg
+
+
+def test_list_serial_ports_hides_onboard_uart_ports():
+    """A desktop exposes dozens of /dev/ttyS* ports that are never an Arduino.
+
+    Listing them buries the one port that matters, so the list keeps only real
+    USB devices (or, where USB metadata is missing, the ACM/USB/COM families).
+    """
+    ports = A.list_serial_ports()
+    assert isinstance(ports, list)
+    for name in ports:
+        assert not name.startswith("/dev/ttyS"), f"onboard UART {name} leaked into the list"
+
+
+def test_both_requirement_files_declare_pyserial():
+    """The root cause, pinned: an undeclared dependency fails only at runtime.
+
+    The Jetson venv is created with --system-site-packages and installs only
+    requirements-jetson.txt, so anything missing there is missing on the robot.
+    """
+    from mav.config import repo_root
+
+    root = repo_root()
+    for name in ("requirements-jetson.txt", "requirements-dev.txt"):
+        lines = [
+            ln.split("#")[0].strip()
+            for ln in (root / name).read_text().splitlines()
+        ]
+        assert "pyserial" in lines, f"{name} must declare pyserial explicitly"

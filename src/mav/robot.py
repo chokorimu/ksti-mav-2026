@@ -19,12 +19,13 @@ import threading
 import time
 from dataclasses import fields, replace
 
+from mav.io.actuator import SerialUnavailable, list_serial_ports
 from mav.planning.avoid import choose_offset
 from mav.types import STOP, Command
 
 _EXPECTED_DRIVE = {"prototype": "differential", "final": "ackermann"}
 _ROBOT_KEYS = {"rate_hz", "max_hold_s"}
-_UNO_RESET_S = 2.0  # the Uno reboots when the serial port is opened; commands sent earlier are lost
+_BOARD_RESET_S = 2.0  # opening the port resets the board (DTR); commands sent earlier are lost
 
 
 class Driver:
@@ -99,6 +100,49 @@ class _LinePort:
         self.last = data.decode("ascii").strip()
 
 
+def _autodetect_port(where: str) -> str:
+    """The single Arduino plugged in, or a message saying why that cannot be decided."""
+    try:
+        found = list_serial_ports()
+    except SerialUnavailable as exc:  # pyserial missing
+        raise SystemExit(f"{exc}") from None
+    if len(found) == 1:
+        return found[0]
+    if not found:
+        raise SystemExit(
+            f"{where}: actuator.port is not set and no Arduino was found over USB.\n"
+            "Plug the board in, or pass --port (see scripts/flash_firmware.sh --list-ports)."
+        )
+    raise SystemExit(
+        f"{where}: actuator.port is not set and {len(found)} serial devices are "
+        f"plugged in: {', '.join(found)}.\nPass --port to choose one."
+    )
+
+
+def _open_serial_or_exit(port: str):
+    """Open the Arduino port, or exit with a message an operator can act on."""
+    try:
+        return open_serial_port(port)
+    except SerialUnavailable as exc:
+        raise SystemExit(f"{exc}") from None
+
+
+def _first_frame(camera, timeout_s: float = 5.0):
+    """Read one frame, or None after `timeout_s`.
+
+    Called once before the control loop. Two reasons: a camera that opens but
+    never delivers is otherwise indistinguishable from a robot that ignores its
+    commands, and the frame size is needed to sanity-check `lane.px_per_m`.
+    """
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        frame = camera.read()
+        if frame is not None:
+            return frame
+        time.sleep(0.05)
+    return None
+
+
 def _check_keys(section: dict, allowed: set, where: str) -> dict:
     unknown = sorted(set(section) - allowed)
     if unknown:
@@ -125,7 +169,8 @@ def main(argv: list[str] | None = None) -> int:
                             load_obstacle_config, load_profile, profile_name, repo_root)
     from mav.control.mapping import AckermannMapper, DifferentialMapper
     from mav.control.state_machine import RobotStateMachine
-    from mav.io.actuator import SafeActuator, SerialActuator, open_serial_port
+    from mav.io.actuator import (SafeActuator, SerialActuator, open_serial_port,
+                                 require_serial)
     from mav.io.buttons import Event, QueueButtons
     from mav.io.camera import open_csi, open_usb, open_video
     from mav.perception.checkpoint import CrossLineDetector, CrossLineTracker
@@ -168,20 +213,52 @@ def main(argv: list[str] | None = None) -> int:
     act_sec = cfg.get("actuator") or {}
     port_name = args.port or act_sec.get("port")
     if not args.dry_run and not port_name:
-        raise SystemExit(f"{where}: actuator.port is not set (or use --dry-run / --port)")
+        # No port configured: use the one board that is plugged in. AGENTS.md
+        # forbids hardcoding serial port names, and the split between a genuine
+        # Nano (/dev/ttyACM*) and a CH340 clone (/dev/ttyUSB*) means a hardcoded
+        # name is wrong on half the boards - including the one on this desk.
+        port_name = _autodetect_port(where)
 
-    # ---- 2. open hardware: camera first, serial last ----
+    # ---- 2. open hardware: preflight, camera, then serial ----
+    # The serial preflight comes FIRST, before the camera. With pyserial missing
+    # the traceback used to appear directly after the Argus/GStreamer log, so a
+    # missing Python package looked exactly like a camera fault (Jetson, 10 Nov
+    # 2026). The camera also takes a second to start, so nothing is lost.
+    if not args.dry_run:
+        try:
+            require_serial()
+        except SerialUnavailable as exc:
+            raise SystemExit(f"{exc}") from None
     if args.video:
-        camera = open_video(args.video)
+        camera, cam_desc = open_video(args.video), f"video {args.video}"
     elif cam_sec.get("kind") == "csi":
         camera = open_csi(sensor_id=int(cam_sec.get("sensor_id", 0)))
+        cam_desc = f"csi sensor {cam_sec.get('sensor_id', 0)}"
     elif cam_sec.get("kind") == "usb":
         camera = open_usb(int(cam_sec.get("index", 0)))
+        cam_desc = f"usb camera {cam_sec.get('index', 0)}"
     else:
         raise SystemExit(f"{where}: camera.kind must be 'csi' or 'usb' (or use --video)")
-    ser = _LinePort() if args.dry_run else open_serial_port(port_name)
+
+    # Prove the camera really delivers, and print the geometry. A camera that
+    # opens but never produces a frame otherwise looks like a robot that simply
+    # refuses to move; and `lane.px_per_m` is pixels per metre AT THIS FRAME
+    # SIZE, so a resolution change rescales the entire lane model silently.
+    first = _first_frame(camera)
+    if first is None:
+        camera.close()
+        raise SystemExit(
+            f"{cam_desc} opened but delivered no frame within 5 s. "
+            "Check the ribbon cable and `ls /dev/video*`."
+        )
+    shape = getattr(first, "shape", None)
+    if shape is not None and len(shape) >= 2:
+        print(f"camera {cam_desc}: {shape[1]}x{shape[0]} - "
+              f"lane.px_per_m is calibrated for THIS frame size")
+
+    ser = _LinePort() if args.dry_run else _open_serial_or_exit(port_name)
     if not args.dry_run:
-        time.sleep(_UNO_RESET_S)
+        time.sleep(_BOARD_RESET_S)
     actuator = SafeActuator(SerialActuator(mapper, ser), max_speed_mps=params.max_speed_mps, timeout_s=0.3)
 
     driver = Driver(detector, policy, tracker, max_hold_s, cones=cones,

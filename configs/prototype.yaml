@@ -1,6 +1,6 @@
 profile: prototype
 camera: { kind: csi, sensor_id: 0 }        # CSI Raspberry Pi module (docs/hardware.md); usb: { kind: usb, index: 0 }
-actuator: { type: serial, port: /dev/ttyACM0 }   # check with: ls /dev/ttyACM* /dev/ttyUSB*
+actuator: { type: serial }   # no port: the single plugged-in board is used. Override with --port or add `port:` here
 robot: { rate_hz: 20.0, max_hold_s: 0.5 }  # max_hold_s: keep the last command this long when the lane is lost, then STOP
 policy: { v_max: 0.3, v_min: 0.15, conf_min: 0.15 }  # B1: let policy steer (not stop) on low-confidence frames
 model: { path: models/prototype/ }

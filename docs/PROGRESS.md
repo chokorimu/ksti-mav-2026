@@ -454,6 +454,50 @@ pin, duplicate pin, 30 ms watchdog: all four caught).
 measurements (procedure in hardware.md), and `final`'s pin map was NOT in the
 reference sketch - it is still unverified.
 
+## Jetson startup crash: pyserial was never declared (10 Nov 2026)
+`scripts/run.sh prototype` on the Jetson opened the CSI camera (Argus mode 4,
+1280x720 @ 60 fps) and then died at `src/mav/robot.py:182` ->
+`src/mav/io/actuator.py:87` with `ModuleNotFoundError: No module named 'serial'`.
+
+**Root cause was not the camera and not the wiring.** `pyserial` was never listed
+in any requirements file. The laptop only had it because `platformio` (dev-only)
+depends on it transitively; the Jetson venv installs `requirements-jetson.txt`
+alone, so it had no pyserial at all. Because the runner opened the camera FIRST,
+the traceback landed directly under the Argus/GStreamer log - a missing Python
+package that reads like a camera fault.
+
+Fixes:
+- `pyserial` declared in BOTH `requirements-jetson.txt` and `requirements-dev.txt`,
+  with a comment saying why it is listed explicitly rather than left transitive.
+- `require_serial()` / `open_serial_port()` raise `SerialUnavailable` naming the
+  install command and stating "NOT a camera or wiring fault". Deliberately a
+  `RuntimeError`, not an `OSError`: `robot.main` catches `OSError` around the loop
+  to report a mid-run cable fault, and a startup dependency problem must not be
+  mistaken for one.
+- The dependency check runs **before** the camera opens (verified: with an
+  explicit `--port` and the check removed, a missing pyserial is masked by the
+  camera error; with it, the dependency error wins). The camera costs a second to
+  start, so nothing is lost.
+- `configs/prototype.yaml` no longer hardcodes `/dev/ttyACM0` (AGENTS.md forbids
+  hardcoded port names). `actuator: { type: serial }` auto-detects the single
+  plugged-in board, refuses to guess between several, and says so. The error for a
+  wrong port now lists the ports that do exist - which is how a CH340 Nano clone
+  (`/dev/ttyUSB0`) gets found instead of the genuine-board `/dev/ttyACM0`.
+- `list_serial_ports()` keeps only real USB devices: a desktop exposes 32
+  `/dev/ttyS*` ports that buried the one that mattered.
+- The camera prints its frame size at startup, and startup waits for one real
+  frame. A camera that opens but never delivers was otherwise indistinguishable
+  from a robot that ignores its commands, and `lane.px_per_m` is pixels per metre
+  at THAT frame size.
+
+Tests: 322 passed (was 308). All four new behaviours are mutation-checked (bare
+`import serial` restored, pyserial dropped from the Jetson file, port list removed
+from the error, preflight removed: each caught).
+
+**Not yet resolved:** the CSI pipeline captures 1280x720 and scales to 640x360, so
+Python sees 640x360 while the Argus log says 1280x720. `lane.px_per_m` is
+calibrated for the frame Python sees - confirm the printed size on the Jetson.
+
 ## Next tasks (in order)
 
 1. **T2 follow-up — BLOCKED on a user decision (asked 7 Nov 2026).** The policy cannot

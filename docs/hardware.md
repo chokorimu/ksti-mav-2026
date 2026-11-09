@@ -102,6 +102,36 @@ Only facts confirmed by the user are in "Confirmed". Everything else is a questi
   docs/research-plan.md).
 - `scripts/setup_jetson.sh` runs on the Jetson (PyYAML 5.4.1 comes from the system packages).
 
+## Startup troubleshooting on the Jetson
+
+**`ModuleNotFoundError: No module named 'serial'`** (hit 10 Nov 2026). `pyserial`
+drives the Arduino link and is imported lazily, so nothing fails at install time -
+the robot dies at startup instead. It now fails with an explicit message, but the
+fix is:
+```bash
+.venv/bin/pip install pyserial          # or: sudo apt install python3-serial
+```
+It was missing because it was never listed in `requirements-jetson.txt`; the laptop
+only had it as a transitive dependency of `platformio`, which is dev-only. Both
+requirements files declare it now. **If you add a new runtime dependency, add it to
+`requirements-jetson.txt` too** - the Jetson venv installs only that file.
+
+The check runs *before* the camera opens on purpose: the first version crashed
+after the Argus/GStreamer log, so a missing Python package looked like a camera
+fault.
+
+**Wrong serial port.** `configs/prototype.yaml` no longer hardcodes one
+(`actuator: { type: serial }`). The runner uses the single board that is plugged in
+and refuses to guess when several are. Override with `--port /dev/ttyUSB0` or add
+`port:` to the config. A **CH340 clone** is `/dev/ttyUSB0`; a genuine board is
+`/dev/ttyACM0`. List them with `scripts/flash_firmware.sh --list-ports`.
+
+**The camera prints its frame size at startup** (`camera csi sensor 0: 640x360`).
+That number matters: `lane.px_per_m` is pixels per metre **at that frame size**, so
+changing the resolution silently rescales the whole lane model. The CSI pipeline
+captures 1280x720 and scales down to 640x360 (`mav.io.camera.csi_pipeline`); Argus
+reporting `1280 x 720` in its log is the capture side, not the frame Python sees.
+
 ## Verified on the Jetson (from the user's command output)
 - Python 3.10.12.
 - OpenCV 4.8.0 with GStreamer 1.20.3. The build info had no CUDA line, so assume OpenCV runs on CPU only.

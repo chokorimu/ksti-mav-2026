@@ -1,5 +1,9 @@
 numpy<2
 pyyaml
 opencv-python-headless~=4.8.0
+# pyserial: the Arduino link (mav.io.actuator.open_serial_port). Listed
+# explicitly rather than relied on as a platformio transitive dependency, so the
+# laptop and the Jetson get the same thing for the same reason.
+pyserial
 pytest
 platformio   # firmware build/flash for the Arduino (firmware/arduino/)

@@ -80,13 +80,73 @@ class SerialActuator:
         self._port.write(b"S\n")
 
 
-def open_serial_port(port: str, baudrate: int = SerialActuator.BAUDRATE):
-    """Open a pyserial port for SerialActuator. Imported lazily so tests (and
-    machines without pyserial) never need it. Install: pip install pyserial
-    (on the Jetson, sudo apt install python3-serial also works)."""
-    import serial
+class SerialUnavailable(RuntimeError):
+    """The serial port could not be opened (missing pyserial, or wrong port).
 
-    return serial.Serial(port, baudrate, timeout=0)
+    Deliberately NOT an OSError: `robot.main` catches OSError around the control
+    loop to report a mid-run cable fault, and a startup dependency problem should
+    not be mistaken for one. It is a "you cannot start" error, not a "the robot
+    just died" error.
+    """
+
+
+_PYSERIAL_HINT = """pyserial is not installed, so the Arduino cannot be reached over USB.
+This is a missing Python package, NOT a camera or wiring fault.
+  Jetson:  .venv/bin/pip install pyserial     (or: sudo apt install python3-serial)
+  laptop:  pip install -r requirements-dev.txt"""
+
+
+def require_serial():
+    """Import pyserial, or raise `SerialUnavailable` naming the install command.
+
+    pyserial is imported lazily on purpose, so the test suite runs on machines
+    without it. The price of that is a bare `ModuleNotFoundError: No module named
+    'serial'`, and because the robot runner opens the CAMERA first, that traceback
+    appears directly after the Argus/GStreamer log - so it reads like a camera
+    fault. It happened on the Jetson on 10 Nov 2026 and cost a debugging session.
+    """
+    try:
+        import serial
+    except ImportError as exc:  # pragma: no cover - depends on the environment
+        raise SerialUnavailable(_PYSERIAL_HINT) from exc
+    return serial
+
+
+def list_serial_ports() -> list[str]:
+    """Device names of serial ports that could plausibly be the Arduino.
+
+    Only real USB devices. A desktop exposes dozens of onboard /dev/ttyS* ports
+    that can never be the Arduino, and listing them buries the one that matters.
+    """
+    require_serial()  # raises SerialUnavailable with the install hint
+    from serial.tools import list_ports
+
+    ports = list(list_ports.comports())
+    usb = [p.device for p in ports if p.vid is not None]
+    if usb:
+        return usb
+    # A platform that does not report USB metadata: fall back to the two name
+    # families an Arduino appears as (genuine Nano = ACM, CH340 clone = USB).
+    return [p.device for p in ports
+            if p.device.startswith(("/dev/ttyACM", "/dev/ttyUSB", "COM"))]
+
+
+def open_serial_port(port: str, baudrate: int = SerialActuator.BAUDRATE):
+    """Open a pyserial port for SerialActuator, or raise `SerialUnavailable`.
+
+    The error carries the ports that DO exist: a wrong port name is the most
+    common cause, and it is easy to get wrong because a genuine Nano is
+    /dev/ttyACM* while a CH340 clone is /dev/ttyUSB*.
+    """
+    serial = require_serial()
+    try:
+        return serial.Serial(port, baudrate, timeout=0)
+    except serial.SerialException as exc:
+        found = list_serial_ports()
+        available = f"Ports that do exist: {', '.join(found)}" if found else (
+            "No serial ports found at all - is the Arduino plugged in?"
+        )
+        raise SerialUnavailable(f"cannot open serial port {port!r}: {exc}\n{available}") from exc
 
 
 class SafeActuator:

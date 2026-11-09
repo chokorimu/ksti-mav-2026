@@ -19,7 +19,7 @@ If a task touches an item marked **[A#]** in the rules, do not guess. Ask the us
 - Dev machines should match OpenCV 4.8.x and `numpy<2` so behavior is comparable to the Jetson.
 - Check the power mode with `sudo nvpmodel -q`. It is currently `MAXN_SUPER`. Use the same mode for testing and competition, and measure performance with `tegrastats`.
 - **Development: Linux is preferred**, Windows is supported as a fallback (ideally via WSL2). Write commands for bash. Use `pathlib`; do not hardcode paths or serial port names.
-- CPU architectures differ (x86_64 laptop vs aarch64 Jetson). Separate dependencies per platform; do not assume the same pip wheels work on both.
+- CPU architectures differ (x86_64 laptop vs aarch64 Jetson). Separate dependencies per platform; do not assume the same pip wheels work on both. **Every runtime dependency must be listed in `requirements-jetson.txt`**, not only in the dev file: the Jetson venv installs that one file, and a dependency that is missing there fails only at runtime (pyserial did, on 10 Nov 2026 — the robot crashed after the camera had already opened, so it looked like a camera fault).
 - There is a **web-based simulator** that uses real computer vision. CV and control code must be identical between sim and the real robot; only the camera and actuator layers differ.
 
 ## Vehicle configurations
@@ -93,7 +93,7 @@ tests/
 ## Implemented so far (no real hardware drivers yet)
 - `src/mav/types.py`: `Command(speed m/s, curvature 1/m)`, `VehicleParams`, `load_vehicle_params()` (refuses to run while `configs/vehicle.yaml` has unmeasured `null` values).
 - `src/mav/io/camera.py`: `Camera` protocol, `csi_pipeline()` (GStreamer, headless), `open_csi/open_usb/open_video`, `CallbackCamera` for the simulator.
-- `src/mav/io/actuator.py`: `SafeActuator` (stopped by default, speed clamp, command timeout), `NullActuator`, `CallbackActuator` for the simulator, and `SerialActuator` (mapper output -> ASCII lines over USB serial per `firmware/arduino/protocol.md`; the port is injected, so tests use a fake port and pyserial stays an optional, lazily-imported dependency).
+- `src/mav/io/actuator.py`: `SafeActuator` (stopped by default, speed clamp, command timeout), `NullActuator`, `CallbackActuator` for the simulator, and `SerialActuator` (mapper output -> ASCII lines over USB serial per `firmware/arduino/protocol.md`; the port is injected, so tests use a fake port and pyserial stays an optional, lazily-imported dependency). The lazy import means a missing pyserial surfaces as a startup crash, so `require_serial()` / `open_serial_port()` raise `SerialUnavailable` (a `RuntimeError`, deliberately not an `OSError`) naming the install command, and `list_serial_ports()` reports the ports that do exist instead of the 32 onboard `/dev/ttyS*` ones.
 - `src/mav/io/buttons.py`: `Event` and `ScriptedButtons`. **Real GPIO buttons are not written**: pins and wiring are unknown.
 - `src/mav/control/mapping.py`: `DifferentialMapper` (prototype) and `AckermannMapper` (final).
 - `src/mav/control/state_machine.py`: BOOT/WAIT_START/RUN/STOPPED; resume after emergency keeps the checkpoint count.
