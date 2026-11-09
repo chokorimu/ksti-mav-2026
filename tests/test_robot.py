@@ -333,3 +333,155 @@ def test_no_board_message_says_how_to_check(monkeypatch):
     assert "lsusb" in msg                 # how to see the USB device itself
     assert "dmesg" in msg                 # whether the kernel saw it
     assert "dialout" in msg               # the permission fix
+
+
+# ------------------------------------------- module-level name resolution --
+def test_module_level_helpers_only_use_module_level_names():
+    """A NameError that the test suite should never have let through.
+
+    `_open_serial_or_exit` is a module-level function, but `open_serial_port` was
+    imported INSIDE `main()`, so it existed only in main's local scope. Calling
+    the helper therefore raised
+
+        NameError: name 'open_serial_port' is not defined
+
+    on the Jetson, after the camera had already opened - so the robot ran, the
+    camera worked, and startup still died with a traceback that looked unrelated.
+
+    Unit tests missed it because they exercised `_autodetect_port` and
+    `_first_frame` but never `_open_serial_or_exit`. This checks the whole class
+    of bug instead of that one function: every global name referenced by a
+    module-level function must resolve at module level.
+    """
+    import builtins
+    import pathlib
+    import symtable
+
+    import mav.robot as robot
+
+    source = pathlib.Path(robot.__file__).read_text()
+    table = symtable.symtable(source, robot.__file__, "exec")
+    module_names = set(vars(robot))
+    builtins_ = set(dir(builtins))
+
+    problems = []
+    for child in table.get_children():
+        if child.get_type() != "function":
+            continue
+        # Only look INSIDE the function body: nested scopes are checked too.
+        for sym in child.get_symbols():
+            if not sym.is_global():
+                continue
+            name = sym.get_name()
+            if name in module_names or name in builtins_:
+                continue
+            problems.append(f"{child.get_name()}() uses undefined global {name!r}")
+
+    assert not problems, "module-level functions reference names that do not exist:\n" + \
+        "\n".join(problems)
+
+
+def test_open_serial_or_exit_actually_opens(monkeypatch):
+    """The call site that raised NameError, exercised directly."""
+    import sys
+    import types
+
+    opened = []
+
+    class FakeSerialModule:
+        SerialException = type("SerialException", (Exception,), {})
+
+        @staticmethod
+        def Serial(port, baud, timeout=0):
+            opened.append((port, baud, timeout))
+            return f"handle:{port}"
+
+    monkeypatch.setitem(sys.modules, "serial", FakeSerialModule)
+    import mav.robot as robot
+
+    assert robot._open_serial_or_exit("/dev/ttyCH341USB0") == "handle:/dev/ttyCH341USB0"
+    assert opened == [("/dev/ttyCH341USB0", 115200, 0)]
+
+
+def test_open_serial_or_exit_reports_a_failure_as_a_clean_exit(monkeypatch):
+    """A startup problem must exit with a message, not a traceback."""
+    import sys
+
+    import types
+
+    class FakeSerialModule:
+        SerialException = type("SerialException", (Exception,), {})
+
+        @staticmethod
+        def Serial(port, baud, timeout=0):
+            raise FakeSerialModule.SerialException("device busy")
+
+    tools = types.ModuleType("serial.tools")
+    tools.list_ports = type("LP", (), {"comports": staticmethod(lambda: [])})
+    FakeSerialModule.tools = tools
+    monkeypatch.setitem(sys.modules, "serial", FakeSerialModule)
+    monkeypatch.setitem(sys.modules, "serial.tools", tools)
+    import mav.robot as robot
+
+    with pytest.raises(SystemExit, match="cannot open serial port"):
+        robot._open_serial_or_exit("/dev/ttyCH341USB0")
+
+
+def test_main_reaches_the_control_loop_with_a_serial_port(monkeypatch):
+    """End to end: config -> camera -> serial -> control loop.
+
+    This is the test that would have caught the NameError before the Jetson did.
+    Everything between config validation and the loop is exercised with a fake
+    camera and a fake serial module, so any undefined name on that path fails
+    here instead of after the camera has already opened on the robot.
+    """
+    import sys
+    import types
+
+    import numpy as np
+
+    import mav.io.camera as cam
+    import mav.robot as robot
+
+    opened = []
+
+    class FakeSerialModule:
+        SerialException = type("SerialException", (Exception,), {})
+
+        @staticmethod
+        def Serial(port, baud, timeout=0):
+            opened.append(port)
+            return type("P", (), {"write": lambda self, d: None,
+                                  "close": lambda self: None})()
+
+    tools = types.ModuleType("serial.tools")
+    tools.list_ports = type("LP", (), {"comports": staticmethod(lambda: [])})
+    FakeSerialModule.tools = tools
+    monkeypatch.setitem(sys.modules, "serial", FakeSerialModule)
+    monkeypatch.setitem(sys.modules, "serial.tools", tools)
+
+    class FakeCam:
+        def read(self):
+            return np.zeros((360, 640, 3), dtype=np.uint8)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(cam, "open_csi", lambda **kw: FakeCam())
+    monkeypatch.setenv("MAV_PROFILE", "prototype")
+    # main() starts a daemon thread reading stdin; left real, it raises when
+    # pytest closes stdin and pollutes the run with a thread warning.
+    monkeypatch.setattr(robot, "_stdin_buttons", lambda *a, **k: None)
+
+    # Break out of the infinite loop once the loop has clearly started.
+    calls = []
+
+    def fake_sleep(_s):
+        calls.append(1)
+        if len(calls) > 2:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(robot.time, "sleep", fake_sleep)
+
+    assert robot.main(["--port", "/dev/ttyCH341USB0"]) == 0
+    assert opened == ["/dev/ttyCH341USB0"]

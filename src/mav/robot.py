@@ -19,7 +19,8 @@ import threading
 import time
 from dataclasses import fields, replace
 
-from mav.io.actuator import SerialUnavailable, list_serial_ports
+from mav.io.actuator import (SerialUnavailable, list_serial_ports,
+                             open_serial_port, require_serial)
 from mav.planning.avoid import choose_offset
 from mav.types import STOP, Command
 
@@ -179,8 +180,7 @@ def main(argv: list[str] | None = None) -> int:
                             load_obstacle_config, load_profile, profile_name, repo_root)
     from mav.control.mapping import AckermannMapper, DifferentialMapper
     from mav.control.state_machine import RobotStateMachine
-    from mav.io.actuator import (SafeActuator, SerialActuator, open_serial_port,
-                                 require_serial)
+    from mav.io.actuator import SafeActuator, SerialActuator
     from mav.io.buttons import Event, QueueButtons
     from mav.io.camera import open_csi, open_usb, open_video
     from mav.perception.checkpoint import CrossLineDetector, CrossLineTracker
