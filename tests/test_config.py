@@ -270,6 +270,24 @@ def test_obstacle_config_can_override_the_inherited_scale(tmp_root):
     assert load_obstacle_config("p", root=tmp_root).px_per_m == 964.0
 
 
+def test_unmeasured_camera_scale_is_refused_with_a_useful_message(tmp_root):
+    # The detector divides by px_per_m, so a null used to crash deep inside the
+    # run with "unsupported operand type(s) for /: 'int' and 'NoneType'" - which
+    # names neither the file nor the key. Refuse at load time instead.
+    write_cfg(tmp_root, "p", "lane: { px_per_m: null, bottom_row_m: 0.3 }\n")
+    with pytest.raises(ValueError, match="px_per_m is null"):
+        load_lane_config("p", root=tmp_root)
+
+
+def test_both_scale_values_are_named_when_missing(tmp_root):
+    write_cfg(tmp_root, "p", "lane: { px_per_m: null, bottom_row_m: null }\n")
+    with pytest.raises(ValueError) as exc:
+        load_lane_config("p", root=tmp_root)
+    assert "px_per_m" in str(exc.value) and "bottom_row_m" in str(exc.value)
+    # ...and says how to get the value, not just that it is missing.
+    assert "calibrate_scale" in str(exc.value)
+
+
 def test_empty_hue_list_disables_cone_detection(tmp_root):
     # AR only (rules §8: ARC is optional): no cone colour -> the detector is skipped.
     write_cfg(tmp_root, "p", "obstacle: { hues: [] }\n")

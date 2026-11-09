@@ -103,7 +103,24 @@ def load_lane_config(
     name = profile_name(profile)
     where = f"configs/{name}.yaml lane"
     data = load_profile(name, root)
-    return _build(LaneConfig, _section(data, "lane", where), where)
+    cfg = _build(LaneConfig, _section(data, "lane", where), where)
+    # `null` on a scalar normally means "disabled", but for these two it means
+    # "not measured", and the detector cannot run without them: `offset_m`
+    # divides by px_per_m, so a None here surfaced later as
+    # "unsupported operand type(s) for /: 'int' and 'NoneType'" from inside the
+    # detector, hundreds of frames into a run, naming neither the file nor the
+    # key. A camera scale is a measurement, so there is no safe default to fall
+    # back to - refuse at load time, where the message can say what to do.
+    missing = [k for k in ("px_per_m", "bottom_row_m") if getattr(cfg, k) is None]
+    if missing:
+        raise ValueError(
+            f"{where}: {', '.join(missing)} is null (not measured). "
+            "Set it to a real measurement: px_per_m from the lane width "
+            "(`python -m mav.tools.calibrate_scale <video>`), bottom_row_m from "
+            "the camera height and pitch. The detector divides by px_per_m, so "
+            "there is no safe default."
+        )
+    return cfg
 
 
 def load_checkpoint_config(
