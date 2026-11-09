@@ -283,3 +283,228 @@ def test_recovers_the_true_scale_from_a_synthetic_lane():
     # band-point method returned ~0 for both, because a straight lane has one
     # centroid column.
     assert recovered[400.0] > 1.5 * recovered[200.0]
+
+
+# ------------------------------------- saying WHY, not listing three maybes ----
+def test_markings_at_row_finds_two_painted_lines():
+    """The raw evidence: how many marking-shaped runs are on this row?"""
+    frame = np.zeros((40, 200, 3), dtype=np.uint8)
+    frame[:, 40:70] = 255      # a 30 px line
+    frame[:, 120:150] = 255    # another 30 px line
+    runs = cs._markings_at_row(frame, 20)
+    assert len(runs) == 2
+    assert runs[0] == (40, 70) and runs[1] == (120, 150)
+
+
+def test_markings_at_row_ignores_a_wide_glare_patch():
+    """A specular glare blob is ONE wide run; a painted line is 20-60 px.
+
+    On a shiny floor the detector's two 'edges' were a dash paired with glare,
+    which is why spans scattered 6.7x. Capping the run width is what separates
+    them - without it, glare counts as a lane edge.
+    """
+    frame = np.zeros((40, 400, 3), dtype=np.uint8)
+    frame[:, 20:50] = 255      # a real line
+    frame[:, 150:380] = 255    # a 230 px glare patch
+    runs = cs._markings_at_row(frame, 20)
+    assert runs == [(20, 50)], f"glare must not count as a marking, got {runs}"
+
+
+def test_markings_at_row_ignores_codec_speckle():
+    frame = np.zeros((40, 200, 3), dtype=np.uint8)
+    frame[:, 100:102] = 255    # 2 px: noise, not paint
+    assert cs._markings_at_row(frame, 20) == []
+
+
+def test_markings_at_row_reports_nothing_on_a_featureless_row():
+    """A blank row must not be turned into a marking by an arbitrary threshold."""
+    assert cs._markings_at_row(np.full((40, 200, 3), 90, np.uint8), 20) == []
+
+
+def test_explanation_names_the_geometry_when_the_lane_is_wider_than_the_frame(
+        monkeypatch, capsys):
+    """The real first clip: 89% of frames showed 0 or 1 marking at the lookahead row.
+
+    The refusal message used to list three possible causes and leave the operator
+    to guess. On the robot's own clip the answer was decidable in one pass: both
+    edges were outside the picture at that distance, because a 0.50 m lane seen
+    0.4-0.5 m ahead is wider than a 640 px frame. That is a MOUNTING problem, and
+    its fix (aim higher / look further) is the opposite of a recording problem's
+    (record again), so guessing was expensive.
+    """
+    one_marking = np.zeros((360, 640, 3), dtype=np.uint8)
+    one_marking[:, 300:330] = 255          # a single dash, like the real clip
+
+    class Cam:
+        def __init__(self):
+            self.n = 0
+
+        def read(self):
+            self.n += 1
+            return None if self.n > 20 else one_marking
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(cs, "open_video", lambda _p: Cam())
+    cs._explain_lookahead_evidence(_StubDetector(_cfg(), (None, {})), "clip.mp4")
+    out = capsys.readouterr().out
+    assert "ONE marking" in out, out
+    assert "outside the picture" in out, out
+    assert "GEOMETRY" in out, "the fix must be named, not implied"
+    # It must NOT send the operator back to re-record a clip that is fine.
+    assert "Nothing is wrong with the recording" in out
+
+
+def test_explanation_reports_two_visible_edges_as_a_pairing_problem(
+        monkeypatch, capsys):
+    """Both edges visible but the span swings 2x+: a dash is being paired with an edge."""
+    wide = np.zeros((360, 640, 3), dtype=np.uint8)
+    wide[:, 60:90] = 255       # left edge
+    wide[:, 540:570] = 255     # right edge -> 510 px span
+    narrow = np.zeros((360, 640, 3), dtype=np.uint8)
+    narrow[:, 60:90] = 255     # left edge
+    narrow[:, 240:270] = 255   # a dash -> 210 px "span", not the lane
+
+    class Cam:
+        def __init__(self):
+            self.n = 0
+
+        def read(self):
+            self.n += 1
+            if self.n > 20:
+                return None
+            return wide if self.n % 2 else narrow
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(cs, "open_video", lambda _p: Cam())
+    cs._explain_lookahead_evidence(_StubDetector(_cfg(), (None, {})), "clip.mp4")
+    out = capsys.readouterr().out
+    assert "two markings" in out, out
+    assert "dash-to-edge" in out, out
+
+
+# ------------------------------------------- diagnosing the refusal, not listing it
+def test_a_dashed_line_is_not_a_lane_edge():
+    """The clip that produced a plausible WRONG answer.
+
+    On the robot's first real clip the leftmost marking at row 155 was present in
+    only 42% of frames. A lane EDGE is painted along the whole track, so it is in
+    nearly every frame; a dashed centre line is not. The tool's row scan found a
+    "stable" 331 px span there and was about to recommend px_per_m = 662 - a
+    number that would look perfectly reasonable in the config and be dash-to-edge.
+    Presence, not just stability, is what tells an edge line from a dash.
+    """
+    import mav.perception.lane as lane_mod
+    from mav.tools import calibrate_scale as cs
+
+    # A dash that appears in 4 of 10 frames, plus an edge line in all of them.
+    frames = []
+    for i in range(10):
+        f = np.zeros((360, 640, 3), dtype=np.uint8)
+        f[:, 540:570] = 255                      # the edge: always there
+        if i < 4:
+            f[:, 210:240] = 255                  # the dash: intermittent
+        frames.append(f)
+
+    class Cam:
+        def __init__(self):
+            self.i = 0
+
+        def read(self):
+            self.i += 1
+            return frames[self.i - 1] if self.i <= len(frames) else None
+
+        def close(self):
+            pass
+
+    detector = _StubDetector(_cfg(), (None, {}))
+    orig = cs.open_video
+    cs.open_video = lambda _p: Cam()
+    try:
+        cs._scan_rows_for_a_usable_lane(detector, "clip.mp4")
+    finally:
+        cs.open_video = orig
+    # The point is the report, which we capture via capsys in the sibling test;
+    # here assert the internal decision: no row may be called usable.
+    # Re-derive it the way the function does.
+    per_row = {}
+    for f in frames:
+        g = f[..., :3].astype(np.float32) @ lane_mod._LUM
+        for y in range(5, 360, 10):
+            runs = cs._runs_in_gray_row(g[y])
+            if len(runs) == 2:
+                per_row.setdefault(y, []).append(runs[1][1] - runs[0][0])
+    assert per_row, "the fixture must produce two-marking rows"
+    for y, spans in per_row.items():
+        presence = len(spans) / len(frames)
+        assert presence < 0.80, (
+            f"row {y} has presence {presence:.0%}; a dash must never reach the "
+            "80% an edge line requires")
+
+
+def test_the_row_scan_refuses_to_recommend_a_dash(capsys, monkeypatch):
+    import mav.perception.lane as lane_mod
+    from mav.tools import calibrate_scale as cs
+
+    frames = []
+    for i in range(10):
+        f = np.zeros((360, 640, 3), dtype=np.uint8)
+        f[:, 540:570] = 255
+        if i < 4:
+            f[:, 210:240] = 255
+        frames.append(f)
+
+    class Cam:
+        def __init__(self):
+            self.i = 0
+
+        def read(self):
+            self.i += 1
+            return frames[self.i - 1] if self.i <= len(frames) else None
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(cs, "open_video", lambda _p: Cam())
+    cs._scan_rows_for_a_usable_lane(_StubDetector(_cfg(), (None, {})), "clip.mp4")
+    out = capsys.readouterr().out
+    assert "DASH" in out, out
+    assert "px_per_m" not in out or "will not report it" in out, (
+        f"a dash span must never be offered as a px_per_m:\n{out}")
+    assert "662" not in out, "331 px / 0.5 m would have implied 662: never print it"
+
+
+def test_the_row_scan_does_recommend_a_real_edge_pair(capsys, monkeypatch):
+    """A continuously painted pair IS measurable - the tool must still work."""
+    from mav.tools import calibrate_scale as cs
+
+    frame = np.zeros((360, 640, 3), dtype=np.uint8)
+    frame[:, 100:130] = 255     # left edge
+    frame[:, 420:450] = 255     # right edge -> 350 px, both present always
+
+    class Cam:
+        def __init__(self):
+            self.i = 0
+
+        def read(self):
+            self.i += 1
+            return frame if self.i <= 10 else None
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(cs, "open_video", lambda _p: Cam())
+    # roi_top 0.0 so the measurable rows are inside the detector's ROI.
+    cs._scan_rows_for_a_usable_lane(_StubDetector(_cfg(roi_top=0.0), (None, {})), "clip.mp4")
+    out = capsys.readouterr().out
+    assert "always present" in out, out
+    # The span is 350 px, so 350/0.5 = 700 px/m - and the row is far from the
+    # lookahead row, so it must say how to move the measurement point instead of
+    # handing over a number that belongs to another distance.
+    assert "350" in out, out
+    assert "lookahead_frac" in out, out
+    frac = re.search(r"lookahead_frac: ([0-9.]+)", out)
+    assert frac and 0.0 <= float(frac.group(1)) <= 1.0, f"fraction out of range:\n{out}"

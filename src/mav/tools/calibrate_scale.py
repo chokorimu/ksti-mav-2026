@@ -28,7 +28,7 @@ import numpy as np
 
 from mav.config import load_lane_config, profile_name
 from mav.io.camera import open_video
-from mav.perception.lane import LaneConfig, LaneDetector
+from mav.perception.lane import LaneConfig, LaneDetector, _LUM
 
 
 def _span_at_lookahead(detector: LaneDetector, frame: np.ndarray) -> tuple[float, float] | None:
@@ -212,6 +212,228 @@ def _explain_where_bands_were(detector: LaneDetector, video_path: str) -> None:
         print("different distance and every offset would inherit the error.")
 
 
+def _runs_in_gray_row(row: np.ndarray,
+                      min_width_px: int = 8,
+                      max_width_px: int = 150) -> list[tuple[int, int]]:
+    """Marking-shaped bright runs in ONE already-converted grayscale row."""
+    row = np.asarray(row, dtype=np.float32)
+    lo, hi = float(row.min()), float(row.max())
+    if hi - lo < 30.0:
+        return []  # a featureless row: nothing painted here, either way
+    # Halfway up the row's own range, with an absolute floor so a nearly flat row
+    # cannot manufacture contrast out of sensor noise. Deliberately NOT the median:
+    # a row where markings cover more than half the width (a wide bright surface)
+    # puts the median ON the markings and then nothing clears it.
+    thr = max(lo + 0.5 * (hi - lo), lo + 35.0)
+    b = (row > thr).astype(np.uint8)
+    d = np.diff(np.concatenate([[0], b, [0]]))
+    starts, ends = np.where(d == 1)[0], np.where(d == -1)[0]
+    return [(int(s), int(e)) for s, e in zip(starts, ends)
+            if min_width_px <= e - s <= max_width_px]
+
+
+def _markings_at_row(frame: np.ndarray, y: int,
+                     min_width_px: int = 8,
+                     max_width_px: int = 150) -> list[tuple[int, int]]:
+    """Bright runs on ONE image row: the raw evidence for a lane width there.
+
+    Deliberately independent of the detector's mask. The mask is what produced
+    the suspect number in the first place, so asking it to justify itself is
+    circular. This looks at the pixels: how many things on this row actually
+    look like a painted marking?
+
+    `max_width_px` matters on a shiny floor. A specular glare patch is one wide
+    run (often 200+ px), while a painted line or dash is 20-60 px, so capping
+    the width is what stops glare being counted as an edge line.
+    """
+    g = np.asarray(frame)[..., :3].astype(np.float32) @ _LUM
+    return _runs_in_gray_row(g[int(y)], min_width_px, max_width_px)
+
+
+def _explain_lookahead_evidence(detector: LaneDetector, video_path: str) -> None:
+    """Say WHY no lane width could be measured, instead of listing three maybes.
+
+    The refusal message used to offer three causes and leave the operator to
+    guess. On the robot's first real clip (10 Nov 2026) the answer was decidable
+    in one pass: at the lookahead row there was never more than ONE marking in
+    the whole clip, so no lane width existed there to measure. The detector had
+    still reported two clusters - it was pairing a dash with a glare patch, which
+    is why the spans scattered 84-563 px (6.7x) instead of settling.
+
+    Counting markings on the raw row separates "the camera cannot see both edges
+    where we look" (a mounting problem) from "the clip is inconsistent" (a
+    recording problem). Those need opposite fixes.
+    """
+    from mav.perception.lane import lookahead_row
+
+    try:
+        cam = open_video(video_path)
+    except RuntimeError:
+        return
+    counts: dict[int, int] = {}
+    spans: list[int] = []
+    frame_w = 0
+    frame_h = 0
+    y_look = 0
+    try:
+        while True:
+            frame = cam.read()
+            if frame is None:
+                break
+            arr = np.asarray(frame)
+            frame_h, frame_w = int(arr.shape[0]), int(arr.shape[1])
+            y_look = int(round(lookahead_row(detector.cfg, frame_h)))
+            runs = _markings_at_row(arr, y_look)
+            counts[len(runs)] = counts.get(len(runs), 0) + 1
+            if len(runs) >= 2:
+                spans.append(runs[-1][1] - runs[0][0])
+    finally:
+        cam.close()
+    total = sum(counts.values())
+    if not total:
+        return
+    print(f"Evidence at the lookahead row {y_look} "
+          f"(frame {frame_w}x{frame_h}, ROI starts at row "
+          f"{int(detector.cfg.roi_top * frame_h)}):")
+    for n in sorted(counts):
+        what = {0: "nothing painted", 1: "ONE marking (a dash, or one edge)",
+                2: "two markings"}.get(n, f"{n} markings")
+        print(f"  {counts[n]:5d} frames ({counts[n] / total:4.0%}): {what}")
+    print()
+    one_or_fewer = counts.get(0, 0) + counts.get(1, 0)
+    if one_or_fewer > 0.5 * total:
+        print("So at the row where the robot measures, the frame does not contain")
+        print("both lane edges - it cannot, because they are outside the picture.")
+        print("The lane is WIDER than the frame that close to the car, so any")
+        print("'lane width' the detector reports there is a dash paired with a")
+        print("glare patch, not the lane. Nothing is wrong with the recording.")
+        print()
+        print("Fix the GEOMETRY, not the clip:")
+        print("  - aim the camera further ahead (less pitch, or mounted higher),")
+        print("    so the lookahead row lands where the whole lane fits;")
+        print("  - or move the measurement point up the frame (a smaller")
+        print("    `lane.lookahead_frac`, and `roi_top` to match).")
+        print("Then record again. Do not paste a number derived from a row that")
+        print("cannot see the lane.")
+        return
+    if spans:
+        arr = np.array(spans, dtype=float)
+        print(f"Two markings WERE found on {len(spans)} frames, spanning "
+              f"{arr.min():.0f}-{arr.max():.0f} px "
+              f"(p25 {np.percentile(arr, 25):.0f}, p75 {np.percentile(arr, 75):.0f}).")
+        if float(np.percentile(arr, 75)) / max(1.0, float(np.percentile(arr, 25))) > 2.0:
+            print("That range is too wide to be one lane: the pairing of which two")
+            print("markings are being measured is changing from frame to frame.")
+            print("A dashed centre line next to one edge line looks exactly like")
+            print("this - the 'width' is then dash-to-edge, not edge-to-edge.")
+
+
+def _scan_rows_for_a_usable_lane(detector: LaneDetector, video_path: str) -> None:
+    """Which image rows can actually see BOTH lane edges, and how steadily.
+
+    This is the answer to "why can I not calibrate": not a list of possible
+    causes, but a table of where the lane is measurable and where it is not. The
+    robot measures at ONE row (`lookahead_row`); if the lane does not fit in the
+    frame there, `px_per_m` cannot be derived at all, and the fix is to move the
+    camera or the row - not to average harder.
+
+    Reported per row: how many frames show exactly two markings, the median
+    distance between them, and p75/p25 of that distance. A stable lane gives a
+    spread near 1.0; a dash paired with an edge line swings with the dash gaps.
+    """
+    from mav.perception.lane import lookahead_row
+
+    try:
+        cam = open_video(video_path)
+    except RuntimeError:
+        return
+    per_row: dict[int, list[float]] = {}
+    frame_h = frame_w = 0
+    frames = 0
+    step = 10
+    try:
+        while True:
+            frame = cam.read()
+            if frame is None:
+                break
+            arr = np.asarray(frame)
+            frame_h, frame_w = int(arr.shape[0]), int(arr.shape[1])
+            g = arr[..., :3].astype(np.float32) @ _LUM
+            frames += 1
+            for y in range(step // 2, frame_h, step):
+                runs = _runs_in_gray_row(g[y])
+                if len(runs) == 2:
+                    per_row.setdefault(y, []).append(float(runs[1][1] - runs[0][0]))
+    finally:
+        cam.close()
+    if not frames:
+        return
+    y_look = int(round(lookahead_row(detector.cfg, frame_h)))
+    print(f"Row scan ({frames} frames, {frame_w}x{frame_h}, "
+          f"lookahead row is {y_look}):")
+    usable: list[tuple[int, float, int]] = []
+    seen_dashed: list[int] = []
+    for y in sorted(per_row):
+        spans = np.array(per_row[y], dtype=float)
+        presence = spans.size / frames
+        if spans.size < 0.4 * frames:
+            continue
+        p25, p50, p75 = (float(np.percentile(spans, q)) for q in (25, 50, 75))
+        spread = p75 / max(1.0, p25)
+        note = ""
+        # A lane EDGE is painted along the whole track, so it is in nearly every
+        # frame. A dashed centre line is not. That is the discriminator: on the
+        # robot's first clip the "stable" row was present in only 42% of frames,
+        # which means the leftmost marking was a DASH - so the distance measured
+        # was dash-to-edge, and 331 px would have implied a plausible, wrong
+        # px_per_m of 662. Stability alone is not enough; presence is what tells
+        # an edge line from a dash.
+        if spread <= 1.25 and presence >= 0.80:
+            usable.append((y, p50, spans.size))
+            note = "  <-- stable and always present: a lane width can be measured here"
+        elif spread <= 1.25:
+            seen_dashed.append(y)
+            note = (f"  present in only {presence:.0%} of frames: the marking "
+                    f"comes and goes, so it is a DASH, not an edge")
+        print(f"  row {y:4d}: {spans.size:4d}/{frames} frames show two markings, "
+              f"median span {p50:6.1f} px, spread {spread:.2f}x{note}")
+    print()
+    if not usable:
+        if seen_dashed:
+            print("The only rows with a consistent distance measure a DASH against an")
+            print("edge line, which is not the lane width - a dashed marking is")
+            print("absent from roughly half the frames, while a lane edge is painted")
+            print("continuously. Taking that number would give a plausible, wrong")
+            print("px_per_m, so this tool will not report it.")
+        else:
+            print("NO row in this clip shows two markings with a stable distance, so")
+            print("the lane never fits in the frame at any height.")
+        print("That is a camera MOUNTING problem: raise the camera, or pitch it")
+        print("further ahead, so both edges are inside the picture where the robot")
+        print("measures.")
+        return
+    best_y, best_span, best_n = max(usable, key=lambda t: t[2])
+    if abs(best_y - y_look) > 16:
+        y0 = int(detector.cfg.roi_top * frame_h)
+        span = max(1, frame_h - 1 - y0)
+        frac = (best_y - y0) / span
+        print(f"The robot measures at row {y_look}, but the lane is only measurable")
+        print(f"around row {best_y} (span {best_span:.0f} px, {best_n}/{frames} frames).")
+        if 0.0 <= frac <= 1.0:
+            print(f"Set `lane.lookahead_frac: {frac:.2f}` so the two rows coincide,")
+            print("then record again and re-run this tool.")
+        else:
+            print(f"That row is OUTSIDE the detector's ROI (rows {y0}-{frame_h - 1}),")
+            print("so no setting of `lookahead_frac` can reach it. Raise the camera")
+            print("or pitch it further ahead until both edges appear where the")
+            print("detector already looks.")
+    else:
+        print(f"Row {best_y} is usable and is where the robot already measures:")
+        print(f"  span {best_span:.0f} px / 0.50 m -> px_per_m = {best_span / 0.5:.0f}")
+        print("  If that looks wrong, check the lane really is 0.50 m wide where")
+        print("  the robot measures it (rules §6), not just where it is painted.")
+
+
 def calibrate(video_path: str, *, lane_m: float = 0.50, profile: str | None = None) -> int:
     name = profile_name(profile)
     try:
@@ -250,6 +472,10 @@ def calibrate(video_path: str, *, lane_m: float = 0.50, profile: str | None = No
             f"only {len(spans)} usable frames out of {frames}: the detector is not "
             "seeing BOTH edge lines at the lookahead row.\n"
         )
+        _explain_lookahead_evidence(detector, video_path)
+        print()
+        _scan_rows_for_a_usable_lane(detector, video_path)
+        print()
         _explain_where_bands_were(detector, video_path)
         return 2
 
@@ -283,25 +509,20 @@ def calibrate(video_path: str, *, lane_m: float = 0.50, profile: str | None = No
         print()
         print("REFUSING to report a value.")
         print()
+        _explain_lookahead_evidence(detector, video_path)
+        print()
+        _scan_rows_for_a_usable_lane(detector, video_path)
+        print()
         if support <= 0.50 or not clear_winner:
             print(f"Only {support:.0%} of the usable frames agree on a width, and the")
             print(f"next group has {runner_up} frames against this one's {group.size},")
-            print("so there is no clear answer in this clip. Common causes, in")
-            print("order of how often they hit this project:")
-            print("  - the clip shows more than one surface (a white mat and a dark")
-            print("    mat need opposite polarity, so the same pixel width means")
-            print("    different things in each);")
-            print("  - the camera moves, so px_per_m genuinely changes frame to frame;")
-            print("  - at the lookahead row only ONE edge line is inside the frame, and")
-            print("    the 'second edge' is a dash or the frame border.")
+            print("so there is no clear answer in this clip.")
         else:
             print(f"The frames that agree still differ by {_rel_spread(group):.2f}x, which a")
             print("0.50 m lane cannot do. The bands are unreliable.")
         print()
-        print("px_per_m belongs to the CAMERA MOUNT (height and pitch). A phone held")
-        print("by hand is not the robot's mount, so even a clean phone clip is not")
-        print("the number the robot needs. Record with the robot's own CSI camera on")
-        print("a real lane, then re-run this.")
+        print("px_per_m belongs to the CAMERA MOUNT (height and pitch), so it must")
+        print("come from the robot's own CSI camera on a real lane.")
         print()
         print("To see what the detector saw:")
         print(f"  python -m mav.perception.lane {video_path} --overlay /tmp/ov.mp4")

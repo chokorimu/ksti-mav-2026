@@ -405,6 +405,13 @@ declares the lane lost after 7 cm and stops. On the phone recording in
 `data/recordings/`, **46 of 76 detected frames** exceeded 0.35 m at this setting.
 Fix: record with `--record` and run `calibrate_scale` (Q7 below).
 
+On the robot's own first clip (`data/recordings/lane.mp4`) the picture is worse
+than "wrong scale": **both lane edges are never in the frame** at the lookahead
+row, so no scale exists there to measure. The detector still reports confident
+numbers (-1.85..+1.98 m offsets, curvature to -5.62 1/m), which is why
+`calibrate_scale` refuses rather than reporting them. See
+`docs/PROGRESS.md`, "the first real robot clip".
+
 **Cause 3 (not a fault): `s` vs Enter.** `s` + Enter starts. **Any other input,
 including a bare Enter, is an EMERGENCY stop.** After that the robot stays in
 `stopped` until `s` is typed again.

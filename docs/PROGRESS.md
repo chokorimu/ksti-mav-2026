@@ -528,6 +528,56 @@ so a weak detection commands a crawl rather than a stop - and a crawl looks like
 hardware fault. `docs/hardware.md` has the field-by-field table.
 Tests: 352 passed (was 348).
 
+## px_per_m calibration: the first real robot clip CANNOT give the value (10 Nov 2026)
+
+`data/recordings/lane.mp4` (640x360, 20 fps, 297 frames, FMP4) is a valid
+recording from the robot's own camera: correct frame size, real lane, real
+markings. `calibrate_scale` still refuses, and it is right to.
+
+**Why:** at the lookahead row (row 296, the row where the robot actually
+measures), the frame contains
+
+| what is on that row | frames |
+|---|---|
+| nothing painted | 114 (38%) |
+| ONE marking | 125 (42%) |
+| two markings | 33 (11%) |
+| 3+ markings (glare) | 25 (8%) |
+
+Both lane edges are **never** in the picture at that distance. A 0.50 m lane seen
+0.4-0.5 m ahead of a 640 px frame is simply wider than the frame, so the detector
+pairs a dash with a glare patch and the resulting "width" scatters over 84-563 px
+(6.7x) instead of settling. That is why the tool refused.
+
+**The trap this exposed in the tool itself.** The row scan found a "stable"
+331 px span at row 155 and was about to recommend `px_per_m = 662` - a number
+that looks completely reasonable and is **dash-to-edge, not edge-to-edge**. The
+discriminator that catches it: a lane EDGE is painted along the whole track and
+appears in nearly every frame, while a DASH is absent about half the time. Row
+155's marking is present in only 42% of frames. The scan now requires >=80%
+presence before calling a row usable, and refuses to print a number otherwise.
+A dashed centre line and a solid edge line are indistinguishable by stability
+alone; only presence separates them.
+
+**Consequence for the robot:** the detector's offsets on this clip are
+meaningless at any `px_per_m`. `off` ranges -1.85..+1.98 m, 62% of detected
+frames exceed `max_offset_m` 0.35 m, and curvature reaches -5.62 1/m (a 0.18 m
+turning radius). Confidence never drops below 0.30, so the frames are not being
+rejected as low-confidence - they are confidently wrong. Fixing `px_per_m`
+alone would NOT fix this.
+
+**What to do instead** - the camera geometry, not the clip:
+- raise the camera or pitch it further ahead, so both edges fit in the frame at
+  the lookahead row; or
+- record on the actual 0.50 m competition lane rather than a road, where the
+  markings are at the lane edges and both are in view;
+- or measure `px_per_m` directly: put two marks exactly 0.50 m apart on the
+  floor at the lookahead distance and read their pixel separation off one frame.
+
+Do NOT paste a value derived from a row that cannot see the lane.
+
+Tests: 361 passed (was 352).
+
 ## Next tasks (in order)
 
 1. **T2 follow-up — BLOCKED on a user decision (asked 7 Nov 2026).** The policy cannot
