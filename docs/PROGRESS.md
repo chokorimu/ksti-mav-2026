@@ -498,6 +498,36 @@ from the error, preflight removed: each caught).
 Python sees 640x360 while the Argus log says 1280x720. `lane.px_per_m` is
 calibrated for the frame Python sees - confirm the printed size on the Jetson.
 
+## Diagnosis: "it moves sometimes, mostly it does not" (10 Nov 2026)
+
+User report after the pyserial fix. Three causes, quantified, none of them a
+mystery after the measurement:
+
+1. **`PWM_DEADBAND` unmeasured -> every command is below breakaway.** The policy's
+   real output is lower than `v_min`/`v_max` suggest, because `LanePolicy` does
+   `speed *= confidence` and subtracts a curvature term. Over realistic
+   (offset, confidence) pairs the command is 0.079-0.257 m/s -> **PWM 24-77** at
+   `MPS_TO_PWM=300, deadband=0`, and a geared motor needs ~100-150 to break away.
+   So no command the policy can produce at this calibration moves the car. Fix:
+   `calibrate_speed --probe`, then re-measure `MPS_TO_PWM`.
+2. **`px_per_m = 130` (real ~650) -> the lane counts as LOST.** Offsets inflate 5x,
+   so a real 7 cm deviation reads as `max_offset_m` 0.35 m; after `max_hold_s`
+   0.5 s the command becomes STOP, and a stopped robot keeps the same bad view, so
+   it can stay stopped indefinitely. Measured on the phone recording: **46 of 76
+   detected frames** exceeded 0.35 m. Fix: `--record` + `calibrate_scale` (Q7).
+3. Not a fault: `s` + Enter starts, **any other input including a bare Enter is an
+   EMERGENCY stop**, and `stopped` needs `s` again.
+
+Found while diagnosing: `policy.conf_min: 0.15` in `configs/prototype.yaml` is
+**dead config** - `LaneConfig.min_confidence` is 0.30 and the detector returns
+`None` first, so the policy never sees a measurement below 0.30. The runner now
+prints a note at startup when `policy.conf_min < lane.min_confidence`.
+
+Observability: the status line gained `conf=`, because confidence scales the speed,
+so a weak detection commands a crawl rather than a stop - and a crawl looks like a
+hardware fault. `docs/hardware.md` has the field-by-field table.
+Tests: 352 passed (was 348).
+
 ## Next tasks (in order)
 
 1. **T2 follow-up — BLOCKED on a user decision (asked 7 Nov 2026).** The policy cannot

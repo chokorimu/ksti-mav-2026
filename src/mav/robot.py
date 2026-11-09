@@ -212,6 +212,16 @@ def main(argv: list[str] | None = None) -> int:
     mapper = DifferentialMapper(params) if params.drive == "differential" else AckermannMapper(params)
     lane_cfg, cp_cfg = load_lane_config(profile), load_checkpoint_config(profile)
     detector = LaneDetector(lane_cfg)
+    if policy.cfg.conf_min < lane_cfg.min_confidence:
+        # Two thresholds for the same thing, and only the detector's is live: the
+        # detector returns None below `lane.min_confidence`, so the policy never
+        # sees such a measurement and a lower `policy.conf_min` is dead config.
+        # Without this note, lowering the policy threshold and seeing no change
+        # is a debugging dead end.
+        print(f"note: policy.conf_min {policy.cfg.conf_min:g} is below "
+              f"lane.min_confidence {lane_cfg.min_confidence:g} - the detector "
+              f"discards those frames before the policy sees them, so the policy "
+              f"threshold has no effect. Lower lane.min_confidence instead.")
     tracker = (CrossLineTracker(CrossLineDetector(cp_cfg))
                if cp_cfg.checkpoint_hues or cp_cfg.finish_hues else None)
     obs_cfg, avoid_cfg = load_obstacle_config(profile), load_avoid_config(profile)
@@ -328,7 +338,13 @@ def main(argv: list[str] | None = None) -> int:
                 last_report = t0
                 m = driver.meas
                 off = f"{m.offset_m:+.2f}" if m else "  -  "
-                print(f"{sm.state.value:10s} cp={sm.checkpoints} lost={int(driver.lost)} off={off} "
+                # conf is printed because it is a first-class cause of "it does
+                # not move": the policy scales speed by confidence, so a weak
+                # detection commands a crawl rather than a stop, and a stop is
+                # easy to recognise while a crawl is not.
+                conf = f"{m.confidence:.2f}" if m else " -  "
+                print(f"{sm.state.value:10s} cp={sm.checkpoints} lost={int(driver.lost)} "
+                      f"off={off} conf={conf} "
                       f"cmd=({driver.last.speed:.2f},{driver.last.curvature:+.2f}) "
                       f"avo={driver.avoid.get('action', '-')} "
                       f"line={ser.last if args.dry_run else (serial_act.last_line or '-')} {ms:.0f}ms")

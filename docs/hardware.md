@@ -365,6 +365,55 @@ that is wiring, not calibration. Check, in this order:
 - the battery is connected to the L298N **+12V** terminal, and all grounds share
   one node.
 
+### Symptom: it moves sometimes, mostly it does not
+
+Two independent causes, and the status line tells them apart. Read it once per
+second:
+
+```
+run  cp=0 lost=0 off=+0.06 conf=0.65 cmd=(0.26,-0.12) avo=- line=W 0.260 0.253 31ms
+```
+
+| field | means | what a bad value causes |
+|---|---|---|
+| `lost=1` | no usable measurement, or `|off| > 0.35 m` | `STOP` after `max_hold_s` (0.5 s) - and a stopped robot keeps the same bad view, so it can stay stopped forever |
+| `off=` | lateral error the policy believes | too large because `px_per_m` is wrong (see below) |
+| `conf=` | detection confidence, 0.3..1.0 | the policy **multiplies speed by it**, so a weak frame commands a crawl, not a stop |
+| `cmd=` | the `(speed, curvature)` sent | 0.00 means the policy chose to stop; small means it is crawling |
+| `line=` | the exact protocol line written | `S` = stop reached the board; `W ...` = a drive command did |
+
+**Cause 1: `PWM_DEADBAND` unmeasured -> the PWM never reaches breakaway.** The
+policy's realistic output is *lower* than its `v_min`/`v_max` suggest, because
+speed is scaled by confidence and by curvature. Confidence on the phone recording
+in `data/recordings/` ranges 0.33-0.96 (median 0.65). Feeding those through the
+policy:
+
+| offset | conf | speed | PWM (k=300, deadband 0) |
+|---|---|---|---|
+| 0.05 m | 0.35 | 0.100 | 30 |
+| 0.15 m | 0.65 | 0.166 | 50 |
+| 0.25 m | 0.90 | 0.202 | 61 |
+
+Every combination lands at PWM 24-77, and a geared motor typically needs 100-150
+to break away. So **no** command the policy can produce at this calibration moves
+the car. Fix: `--probe` above, then re-measure `MPS_TO_PWM`.
+
+**Cause 2: `px_per_m` is wrong, so the lane counts as LOST.** With
+`px_per_m = 130` instead of the real ~650, every offset is inflated 5x. A real
+deviation of 7 cm reads as 0.35 m, which is exactly `max_offset_m`, so the robot
+declares the lane lost after 7 cm and stops. On the phone recording in
+`data/recordings/`, **46 of 76 detected frames** exceeded 0.35 m at this setting.
+Fix: record with `--record` and run `calibrate_scale` (Q7 below).
+
+**Cause 3 (not a fault): `s` vs Enter.** `s` + Enter starts. **Any other input,
+including a bare Enter, is an EMERGENCY stop.** After that the robot stays in
+`stopped` until `s` is typed again.
+
+Also note: `policy.conf_min` (0.15) is **dead config** while
+`lane.min_confidence` (0.30) is higher - the detector returns `None` first, so the
+policy never sees a measurement below 0.30. The runner prints a note at startup
+when this happens. Lower `lane.min_confidence` to actually loosen it.
+
 ### Procedure
 Safety first: e-stop in hand and tested, motors running only on the floor, a clear
 straight run of at least 4 m, the same surface for every point, and the battery

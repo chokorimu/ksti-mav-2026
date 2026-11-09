@@ -541,3 +541,135 @@ def test_record_flag_wraps_the_camera_before_anything_reads_it(monkeypatch, tmp_
     assert robot.main(["--dry-run", "--record", out]) == 0
     assert made == [out], "the camera was not wrapped for recording"
     assert (tmp_path / "clip.mp4").exists(), "no recording was written"
+
+
+# ------------------------------------------- what the status line must reveal --
+def _fake_hardware(monkeypatch, tmp_path, detections=None):
+    """Wire main() to a fake camera and fake serial, and press START once.
+
+    Returns nothing: it only patches. `detections` is the LaneMeasurement the
+    fake detector returns (None -> the detector sees nothing).
+    """
+    import sys
+    import types
+
+    import numpy as np
+
+    import mav.io.buttons as buttons_mod
+    import mav.io.camera as cam
+    import mav.perception.lane as lane_mod
+    import mav.robot as robot
+
+    class FakeSerialModule:
+        SerialException = type("SerialException", (Exception,), {})
+
+        @staticmethod
+        def Serial(port, baud, timeout=0):
+            return type("P", (), {"write": lambda self, d: None,
+                                  "close": lambda self: None})()
+
+    tools = types.ModuleType("serial.tools")
+    tools.list_ports = type("LP", (), {"comports": staticmethod(lambda: [])})
+    FakeSerialModule.tools = tools
+    monkeypatch.setitem(sys.modules, "serial", FakeSerialModule)
+    monkeypatch.setitem(sys.modules, "serial.tools", tools)
+
+    class FakeCam:
+        def read(self):
+            return np.zeros((360, 640, 3), dtype=np.uint8)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(cam, "open_csi", lambda **kw: FakeCam())
+    monkeypatch.setenv("MAV_PROFILE", "prototype")
+    monkeypatch.setattr(robot, "_stdin_buttons", lambda *a, **k: None)
+
+    # START on the first poll, so the loop reaches RUN and reads a frame.
+    class FakeButtons:
+        def __init__(self):
+            self._n = 0
+
+        def poll(self):
+            self._n += 1
+            return [buttons_mod.Event.START] if self._n == 1 else []
+
+    monkeypatch.setattr(buttons_mod, "QueueButtons", FakeButtons)
+
+    if detections is not None:
+        class FakeDetector:
+            def __init__(self, cfg):
+                pass
+
+            def detect_with_debug(self, frame):
+                return detections, {}
+
+        monkeypatch.setattr(lane_mod, "LaneDetector", FakeDetector)
+
+    calls = []
+
+    def fake_sleep(_s):
+        calls.append(1)
+        if len(calls) > 2:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(robot.time, "sleep", fake_sleep)
+
+
+def test_status_line_shows_detection_confidence(monkeypatch, tmp_path, capsys):
+    """`conf=` must appear, because low confidence is a silent cause of no motion.
+
+    The policy multiplies speed by confidence, so a weak detection commands a
+    crawl instead of a stop: the robot hums at PWM 30 rather than being obviously
+    halted. Without the number on the status line, that is indistinguishable from
+    a firmware or wiring problem.
+    """
+    from mav.perception.lane import LaneMeasurement
+
+    meas = LaneMeasurement(offset_m=0.05, lookahead_m=1.0, curvature_inv_m=0.0,
+                           confidence=0.42, n_points=8)
+    _fake_hardware(monkeypatch, tmp_path, detections=meas)
+    import mav.robot as robot
+
+    robot.main(["--port", "/dev/ttyCH341USB0"])
+    out = capsys.readouterr().out
+    assert "conf=0.42" in out, f"confidence missing from the status line:\n{out}"
+    assert "lost=0" in out, "a 0.05 m offset is not lost"
+
+
+def test_status_line_shows_no_confidence_when_the_lane_is_not_seen(monkeypatch, tmp_path, capsys):
+    _fake_hardware(monkeypatch, tmp_path, detections=None)
+    import mav.robot as robot
+
+    robot.main(["--port", "/dev/ttyCH341USB0"])
+    out = capsys.readouterr().out
+    assert "conf=" in out, f"the field must always be present:\n{out}"
+    assert "conf=0." not in out
+
+
+def test_a_dead_policy_threshold_is_reported_at_startup(monkeypatch, tmp_path, capsys):
+    """`policy.conf_min` below `lane.min_confidence` has NO effect.
+
+    The detector returns None below `lane.min_confidence`, so the policy never
+    sees such a measurement. configs/prototype.yaml sets policy.conf_min 0.15
+    with a comment claiming it lets the policy steer on low-confidence frames -
+    it cannot, because the detector discards them at 0.30 first. Silently dead
+    configuration is worse than none: it makes a debugging session look like the
+    threshold "does not work".
+    """
+    _fake_hardware(monkeypatch, tmp_path, detections=None)
+    import mav.robot as robot
+
+    robot.main(["--port", "/dev/ttyCH341USB0"])
+    out = capsys.readouterr().out
+    assert "lane.min_confidence" in out, f"the dead threshold is not reported:\n{out}"
+    assert "0.15" in out and "0.3" in out, "the note must name both values"
+
+
+def test_the_advice_in_the_threshold_note_names_a_real_setting():
+    """The note tells the operator to lower `lane.min_confidence`. It must exist."""
+    from dataclasses import fields
+
+    from mav.perception.lane import LaneConfig
+
+    assert "min_confidence" in {f.name for f in fields(LaneConfig)}
