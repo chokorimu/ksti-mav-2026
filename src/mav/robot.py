@@ -113,12 +113,15 @@ def _autodetect_port(where: str) -> str:
             f"{where}: actuator.port is not set and no Arduino was found over USB.\n"
             "The Nano gets power from USB, so if it is connected it should appear.\n"
             "Check on this machine:\n"
-            "  scripts/flash_firmware.sh prototype --list-ports   # /dev/ttyACM* or /dev/ttyUSB*\n"
+            "  scripts/flash_firmware.sh prototype --list-ports   # what the runner can see\n"
+            "  lsusb -t | grep -i 'ch34\\|cp210\\|ftdi'            # which driver is BOUND\n"
             "  lsusb | grep -i '1a86\\|2341'                       # 1a86 = CH340 clone, 2341 = genuine\n"
             "  dmesg | tail -5                                    # does the kernel see it at all?\n"
+            "A CH340 is NOT always /dev/ttyUSB0: WCH's own driver (usb_ch341) makes\n"
+            "/dev/ttyCH341USB0 instead, so check /dev/ttyCH341* too.\n"
             "If the device exists but cannot be OPENED, you may need: "
             "sudo usermod -aG dialout $USER (then log out and back in).\n"
-            "Or pass --port /dev/ttyUSB0."
+            "Or pass --port <the device name>."
         )
     raise SystemExit(
         f"{where}: actuator.port is not set and {len(found)} serial devices are "

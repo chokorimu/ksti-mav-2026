@@ -248,3 +248,72 @@ def test_permission_denied_is_diagnosed_as_rights_not_wiring(monkeypatch):
     assert "log out" in msg.lower() or "LOG OUT" in msg
     # It must NOT be reported as a missing port: the port exists.
     assert "Ports that do exist" not in msg
+
+
+# ------------------------------------------- the WCH vendor driver's port name --
+def test_vendor_ch341_driver_port_is_not_dropped(monkeypatch):
+    """WCH's own out-of-tree driver (`usb_ch341`) makes /dev/ttyCH341USB0.
+
+    Some Jetson images carry it. It does NOT create /dev/ttyUSB0, and it does not
+    always expose vid/pid through sysfs, so a filter that knows only ttyUSB/ttyACM
+    reports "no Arduino found" while the board sits there bound to a driver.
+    That is exactly what happened on the Jetson on 10 Nov 2026: lsusb -t showed
+    `Driver=usb_ch341` and there was no /dev/ttyUSB* anywhere.
+    """
+    import types
+
+    class P:
+        def __init__(self, device, vid=None):
+            self.device, self.vid = device, vid
+
+    class FakeListPorts:
+        @staticmethod
+        def comports():
+            return [P("/dev/ttyS0"), P("/dev/ttyS1"), P("/dev/ttyCH341USB0")]
+
+    fake_serial = type("S", (), {})()
+    monkeypatch.setitem(sys.modules, "serial", fake_serial)
+    tools = types.ModuleType("serial.tools")
+    tools.list_ports = FakeListPorts
+    monkeypatch.setitem(sys.modules, "serial.tools", tools)
+
+    assert A.list_serial_ports() == ["/dev/ttyCH341USB0"]
+
+
+def test_onboard_uart_is_still_excluded_from_the_fallback(monkeypatch):
+    """The widened name list must not let /dev/ttyS* back in.
+
+    A desktop exposes 32 of them and they can never be the Arduino.
+    """
+    import types
+
+    class P:
+        def __init__(self, device):
+            self.device, self.vid = device, None
+
+    class FakeListPorts:
+        @staticmethod
+        def comports():
+            return [P(f"/dev/ttyS{i}") for i in range(32)]
+
+    monkeypatch.setitem(sys.modules, "serial", type("S", (), {})())
+    tools = types.ModuleType("serial.tools")
+    tools.list_ports = FakeListPorts
+    monkeypatch.setitem(sys.modules, "serial.tools", tools)
+
+    assert A.list_serial_ports() == []
+
+
+def test_flash_script_finds_the_vendor_port_name():
+    """flash_firmware.sh must not glob only ttyACM/ttyUSB.
+
+    It now asks the same Python helper the runner uses, so the two cannot
+    disagree; the glob fallback also covers /dev/ttyCH341*.
+    """
+    from mav.config import repo_root
+
+    script = (repo_root() / "scripts" / "flash_firmware.sh").read_text()
+    assert "list_serial_ports" in script, (
+        "the flash script should reuse the runner's port enumeration"
+    )
+    assert "ttyCH341" in script, "the glob fallback must cover WCH's driver name"

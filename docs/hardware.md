@@ -102,66 +102,57 @@ Only facts confirmed by the user are in "Confirmed". Everything else is a questi
   docs/research-plan.md).
 - `scripts/setup_jetson.sh` runs on the Jetson (PyYAML 5.4.1 comes from the system packages).
 
-## The CH340 Nano clone does not appear on the Jetson (confirmed 10 Nov 2026)
+## The CH340 Nano clone: its port is NOT /dev/ttyUSB0 (confirmed 10 Nov 2026)
 
-**Symptom.** `lsusb` shows the board, but there is no device node:
+**Symptom.** The board is on USB and bound to a driver, but the expected device
+node is missing:
 
 ```
 $ lsusb | grep -i 1a86
 Bus 001 Device 010: ID 1a86:7523 QinHeng Electronics CH340 serial converter
-$ ls /dev/ttyACM* /dev/ttyUSB*
-(nothing)
+$ ls /dev/ttyUSB*
+No such file or directory
+$ lsusb -t | grep -i ch34
+|__ Port 4: Dev 13, If 0, Class=Vendor Specific Class, Driver=usb_ch341, 12M
 ```
 
-**It is NOT a missing kernel module.** Verified on this Jetson (kernel
-`5.15.185-tegra`): `ch341.ko` is present in
-`/lib/modules/$(uname -r)/kernel/drivers/usb/serial/` and `lsmod` shows
-`ch341 28672 0`. An earlier note here claimed the module was absent on L4T R36;
-that was wrong and is corrected here. The `0` refcount is the clue: the module is
-loaded but **nothing is bound to it**.
-
-**The cause is `brltty`.** Ubuntu 22.04 (the JetPack 6 base) ships `brltty`, the
-braille-display daemon, whose udev rule matches `1a86:7523` - the CH340 - because
-some braille displays use that chip. It claims the device, then drops it, so the
-kernel creates `/dev/ttyUSB0` and immediately removes it. The signature in
-`dmesg` is exactly that pair of lines:
+**Answer: the port is `/dev/ttyCH341USB0`.** `usb_ch341` is not the kernel's
+`ch341` driver - it is **WCH's own out-of-tree driver** (the chip's manufacturer,
+`ch341ser_linux`), which names its device `ttyCH341USB0` instead of `ttyUSB0`.
+`lsmod` showing `ch341 28672 0` (refcount 0) is consistent: the in-tree module is
+loaded but has nothing bound, because the vendor driver got there first.
 
 ```
-ch341-uart converter now attached to ttyUSB0
-ch341-uart disconnected from ttyUSB0
+$ ls /dev/ttyCH341*
+/dev/ttyCH341USB0
 ```
 
-This affects any CH340/CH341 adapter on Ubuntu 22.04, not just this robot, and it
-is the number one reason an Arduino clone "disappears" on that release.
-
-**Fix - confirm first, then remove:**
 ```bash
-dpkg -l | grep brltty                 # is it installed?
-lsusb -t                              # which driver is actually bound?
-sudo dmesg | grep -i ch34             # attached-then-disconnected?
+# Either pass it explicitly:
+scripts/run.sh prototype --port /dev/ttyCH341USB0
+# or let auto-detection find it (list_serial_ports covers this name):
+scripts/run.sh prototype
 ```
 
-If `brltty` is present, remove it. It is only needed for a braille e-reader,
-which this robot does not have:
-```bash
-sudo apt remove brltty
-# then unplug and replug the Nano
-ls /dev/ttyUSB*                       # should now exist
-```
-The less invasive alternative is to mask the daemon and keep the package:
-```bash
-sudo systemctl mask brltty.service brltty-udev.service
-```
-Masking is enough in most reports, but removal is the option that stops the udev
-rule from firing at all, so try that first if masking leaves the device flapping.
+**Two wrong diagnoses, recorded so they are not repeated.**
+1. "L4T R36 does not ship `ch341`" - wrong. `ch341.ko` is present and loaded on
+   kernel 5.15.185-tegra.
+2. "`brltty` is claiming the device" - wrong on this machine. `brltty` was already
+   removed. It *is* a real cause of CH340 flapping on Ubuntu 22.04 in general
+   (its udev rule matches `1a86:7523`; `dmesg` then shows
+   `ch341-uart converter now attached to ttyUSB0` immediately followed by
+   `ch341-uart disconnected from ttyUSB0`), so it stays documented - but it was not
+   this case.
 
-**What is NOT the cause** (all checked): the `ch341` module (present and loaded),
-permissions (the user is in `dialout`), and the cable (`lsusb` sees the chip).
+**The lesson that generalises:** `lsusb -t` names the driver that is actually
+bound, and that name is the fastest way to tell the kernel driver (`ch341`) from
+the vendor one (`usb_ch341`). Checking it first would have skipped both wrong
+turns. Do not assume a CH340 always means `/dev/ttyUSB0`.
 
-**Only if `ch341` were genuinely absent** (it is not, here): a different
-USB-serial chip (`cp210x`/`ftdi_sio` are also present on this image) is far cheaper
-than building the module, because L4T images usually lack `Module.symvers` and the
-build then fails at modpost with `"usb_register_driver" undefined`.
+**Why this was missed twice:** both `list_serial_ports()` and
+`flash_firmware.sh` knew only `/dev/ttyACM*` and `/dev/ttyUSB*`. Both now use one
+shared enumeration that also covers `/dev/ttyCH341*`, so the runner and the flash
+script cannot disagree with each other.
 
 ## Startup troubleshooting on the Jetson
 

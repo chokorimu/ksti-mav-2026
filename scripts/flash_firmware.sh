@@ -54,19 +54,37 @@ case "$variant" in
     ;;
 esac
 
-# Candidate ports: ttyACM* (native USB, e.g. a genuine Nano/ATmega16U2) and
-# ttyUSB* (USB-serial bridge, e.g. a CH340 Nano clone). Never hardcode a name.
+# Candidate ports. Use the SAME enumeration as the runner (pyserial via
+# mav.io.actuator.list_serial_ports) so the two can never disagree, then fall
+# back to globbing if python/pyserial is unavailable.
+#
+# A hardcoded /dev/ttyACM* /dev/ttyUSB* glob is not enough: WCH's own out-of-tree
+# driver (usb_ch341, present on some Jetson images) creates /dev/ttyCH341USB0
+# instead of /dev/ttyUSB0, and the glob silently misses the board while it sits
+# there bound to a driver. That cost a debugging session on 10 Nov 2026.
 ports=()
-for p in /dev/ttyACM* /dev/ttyUSB*; do
-  [ -e "$p" ] && ports+=("$p")
-done
+while IFS= read -r p; do
+  [ -n "$p" ] && ports+=("$p")
+done < <(
+  PYTHONPATH=src python -c '
+from mav.io.actuator import list_serial_ports
+for p in list_serial_ports():
+    print(p)
+' 2>/dev/null || true
+)
+if [ "${#ports[@]}" -eq 0 ]; then
+  for p in /dev/ttyACM* /dev/ttyUSB* /dev/ttyCH341*; do
+    [ -e "$p" ] && ports+=("$p")
+  done
+fi
 
-# Listing ports is pure bash and must work BEFORE the pio check: the Jetson has
-# no pio (the AVR toolchain is x86-only) and is exactly where you need to find
-# out which port the Nano landed on.
+# Listing ports must work BEFORE the pio check: the Jetson has no pio (the AVR
+# toolchain is x86-only) and is exactly where you need to find out which port
+# the Nano landed on.
 if [ "$list_ports" -eq 1 ]; then
   if [ "${#ports[@]}" -eq 0 ]; then
-    echo "No serial ports found (/dev/ttyACM* /dev/ttyUSB*) - is the Arduino plugged in?"
+    echo "No serial ports found - is the Arduino plugged in?"
+    echo "The chip may still be visible on USB: lsusb | grep -i '1a86\\|2341'"
   else
     printf '%s\n' "${ports[@]}"
   fi
@@ -81,8 +99,11 @@ command -v pio >/dev/null 2>&1 || {
 
 if [ "$compile_only" -eq 0 ]; then
   if [ "${#ports[@]}" -eq 0 ]; then
-    echo "No Arduino detected (no /dev/ttyACM* or /dev/ttyUSB*)." >&2
-    echo "Plug in the Arduino over USB, then re-run. Check with: ls /dev/ttyACM* /dev/ttyUSB*" >&2
+    echo "No Arduino detected." >&2
+    echo "Plug it in, then check: scripts/flash_firmware.sh prototype --list-ports" >&2
+    echo "If lsusb sees it but there is no device node, the driver is not binding:" >&2
+    echo "  lsusb -t          # which driver owns it?" >&2
+    echo "  sudo dmesg | tail -20" >&2
     exit 1
   fi
   if [ -z "$port" ]; then

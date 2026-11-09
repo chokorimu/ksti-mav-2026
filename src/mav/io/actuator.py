@@ -117,6 +117,12 @@ def list_serial_ports() -> list[str]:
 
     Only real USB devices. A desktop exposes dozens of onboard /dev/ttyS* ports
     that can never be the Arduino, and listing them buries the one that matters.
+
+    The name list matters more than it looks. A CH340 clone normally appears as
+    /dev/ttyUSB0, but WCH's own out-of-tree driver (`usb_ch341`, which some Jetson
+    images have) creates **/dev/ttyCH341USB0** instead - and a name filter that
+    only knows ttyUSB/ttyACM reports "no Arduino found" while the board sits there
+    happily bound to a driver. That happened on the Jetson on 10 Nov 2026.
     """
     require_serial()  # raises SerialUnavailable with the install hint
     from serial.tools import list_ports
@@ -125,10 +131,12 @@ def list_serial_ports() -> list[str]:
     usb = [p.device for p in ports if p.vid is not None]
     if usb:
         return usb
-    # A platform that does not report USB metadata: fall back to the two name
-    # families an Arduino appears as (genuine Nano = ACM, CH340 clone = USB).
-    return [p.device for p in ports
-            if p.device.startswith(("/dev/ttyACM", "/dev/ttyUSB", "COM"))]
+    # A platform (or vendor driver) that does not report USB metadata: fall back
+    # to the device-name families a USB-serial adapter can appear as. Onboard
+    # /dev/ttyS* is deliberately absent - it is never an Arduino.
+    prefixes = ("/dev/ttyACM", "/dev/ttyUSB", "/dev/ttyCH341", "/dev/ttyXRUSB",
+                "/dev/ttyAMA", "/dev/ttyTHS", "COM")
+    return [p.device for p in ports if p.device.startswith(prefixes)]
 
 
 def open_serial_port(port: str, baudrate: int = SerialActuator.BAUDRATE):
