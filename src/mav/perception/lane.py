@@ -77,6 +77,8 @@ class LaneConfig:
     min_confidence: float = 0.3
     min_contrast: float = 20.0       # absolute gray-level floor under the marking threshold
     cluster_gap_m: float = 0.15      # column gap that splits one band into separate markings
+    border_margin_px: int = 2       # markings this close to the frame edge are truncated, not edges
+    min_cluster_pixels: float = 3.0  # absolute floor on a cluster's mass (codec noise is 1-2 px)
     max_band_span_m: float = 0.8    # if a band's marking spans more than this, it is dropped
     mask_frac_band: tuple[float, float] = (0.01, 0.25)  # sane marking coverage (auto mode)
 
@@ -203,6 +205,9 @@ def _band_points_with_clusters(
     max_span_px: float | None = None,
     dropped: dict[str, int] | None = None,
     max_gap_px: float | None = None,
+    width_out: dict | None = None,
+    border_margin_px: int = 0,
+    min_cluster_px: float = 2.0,
 ) -> list[tuple[float, float, float, int]]:
     """`_band_points` plus a cluster count: (row, column, pixels, n_clusters).
 
@@ -213,7 +218,8 @@ def _band_points_with_clusters(
     one edge line on its own: its centroid sits ON that line, up to half a lane
     width off centre (measured on a phone recording: offsets saturating at
     +-2.5-3 m), so `_fit_debug` trusts such a band only when nothing better
-    exists.
+    exists. Set `width_out["lane_width_px"]` to receive the frame's measured
+    lane width in pixels, which the smear gate computes anyway.
     """
     h, w = mask.shape
     edges = np.linspace(0, h, n_bands + 1).astype(int)
@@ -241,11 +247,19 @@ def _band_points_with_clusters(
             if cols.size:
                 splits = np.where(np.diff(cols) > max_gap_px)[0]
                 groups = [g for g in np.split(cols, splits + 1) if g.size]
-                min_cluster_px = max(2.0, 0.05 * total)
+                min_cluster_px = max(min_cluster_px, 0.05 * total)
+                # A cluster running into the frame edge is TRUNCATED: its outer
+                # boundary is where the sensor stopped, not where the marking
+                # ends, so it cannot be used as a lane edge. Without this, codec
+                # noise on the sensor border (measured: 2 dark pixels at column
+                # 0 and 1 at column 723 on a phone clip) reads as "two edge
+                # lines" and reports the lane as 723 px wide - the full frame.
                 sig = [
                     (float(g[0]), float(g[-1]), float(colsum[g].sum()))
                     for g in groups
                     if float(colsum[g].sum()) >= min_cluster_px
+                    and g[0] >= border_margin_px
+                    and g[-1] <= w - 1 - border_margin_px
                 ]
         bands.append((i, colsum, total, sig))
 
@@ -261,6 +275,28 @@ def _band_points_with_clusters(
         lane_width_px: float | None = float(np.median(multi_widths))
     else:
         lane_width_px = max_span_px
+    if width_out is not None:
+        # Exposed for the scale calibrator: the lane width in pixels IS the
+        # ruler for px_per_m, and the smear gate already measures it. Computing
+        # it a second time elsewhere would let the two drift apart.
+        #
+        # `lane_width_px` is the median across ALL bands, which is what the smear
+        # gate wants (one robust number for the whole ROI). It is NOT the width
+        # at the lookahead row, and those differ under perspective: on a
+        # synthetic lane with taper=0.4 the ROI median is 158 px while the
+        # lookahead row is ~130 px. `px_per_m` is defined AT the lookahead row,
+        # so the calibrator must use the per-row value, reported below.
+        width_out["lane_width_px"] = lane_width_px
+        width_out["n_width_samples"] = len(multi_widths)
+        # `b[0]` is the band INDEX; using a leftover loop variable here made
+        # every row report as the last band's row, which silenced the whole
+        # per-row diagnostic and cost an hour chasing a nonexistent "all
+        # observations land on one row" problem in the real clip.
+        width_out["lane_width_by_row"] = [
+            (float(0.5 * (edges[b[0]] + edges[b[0] + 1])),
+             float(b[3][-1][1] - b[3][0][0]))
+            for b in bands if len(b[3]) >= 2
+        ]
 
     pts: list[tuple[float, float, float, int]] = []
     n_smeared = 0
@@ -428,8 +464,12 @@ class LaneDetector:
         max_span_px = None if cfg.max_band_span_m is None else cfg.max_band_span_m * cfg.px_per_m
         gap_px = None if cfg.cluster_gap_m is None else cfg.cluster_gap_m * cfg.px_per_m
         dropped: dict[str, int] = {}
+        widths: dict = {}
         pts4 = _band_points_with_clusters(
-            mask, cfg.n_bands, cfg.min_band_pixels, max_span_px, dropped, gap_px
+            mask, cfg.n_bands, cfg.min_band_pixels, max_span_px, dropped, gap_px,
+            width_out=widths,
+            border_margin_px=cfg.border_margin_px,
+            min_cluster_px=cfg.min_cluster_pixels,
         )
         debug: dict = {
             "polarity": polarity,
@@ -438,6 +478,11 @@ class LaneDetector:
             "n_bands_dropped_smeared": dropped.get("smeared", 0),
             "n_bands_dropped_thin": dropped.get("thin", 0),
             "band_points": [[p[0], p[1], p[2]] for p in pts4],
+            # The lane width in pixels the smear gate already measured. This is
+            # what turns the lane into a ruler for px_per_m.
+            "lane_width_px": widths.get("lane_width_px"),
+            "n_width_samples": widths.get("n_width_samples", 0),
+            "lane_width_by_row": widths.get("lane_width_by_row") or [],
         }
         if len(pts4) < cfg.min_points:
             return None, debug

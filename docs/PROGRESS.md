@@ -343,6 +343,44 @@ can roughly double the score. `STP = 0.25` only for Ackermann, so the prototype
       yet), and the servo range (so `final` cannot steer yet). Both firmware
       values are physical measurements, not code changes.
 
+## px_per_m calibration attempt (10 Nov 2026) — the tool, and why the clip fails
+`src/mav/tools/calibrate_scale.py` solves `px_per_m` from the LANE WIDTH, the only
+length in the arena we know (rules §6: 0.50 m ±10%). Three bugs were found by
+running it, each of which had produced a plausible-looking wrong number:
+
+1. **`band_points` is not a lane width.** It holds ONE centroid per band, and with
+   both edge lines visible that centroid is the lane MIDDLE. `max(col)-min(col)`
+   therefore measured curve drift, not width: a 43.8 px "lane" on a 1280 px frame.
+2. **The median over the ROI is not the width at the lookahead row.** `px_per_m`
+   is defined at one row; under perspective the ROI median differs a lot (synthetic
+   taper=0.4: 158 px median vs ~130 px at the lookahead row). The detector now
+   exposes `lane_width_by_row`.
+3. **Border pixels counted as edge lines.** A phone codec leaves 1-2 dark pixels
+   against the sensor edge; the cluster splitter read them as two markings and
+   reported a lane as wide as the whole frame (measured: 2 px at column 0 and 1 px
+   at column 723 -> "723 px lane"). Fixed in `lane.py` with `border_margin_px`
+   (a cluster running into the frame edge is TRUNCATED, so it is not an edge) and
+   `min_cluster_pixels` (an absolute mass floor, because `0.05 * total` is 0.2 px
+   on a band that holds almost nothing). Measured effect on the phone clip:
+   detections 285 -> 261 of 509 (-8%), but `|offset|` median 0.78 -> 0.71 m and
+   confidence median 0.44 -> 0.59 - the frames lost were false positives.
+   `tests/test_lane.py` pins all of it; each assertion was mutation-checked.
+
+**Result on `data/recordings/WhatsApp Video 2026-11-06 at 17.38.47.mp4`: still
+refused, correctly.** 2036 frames, 634 usable. The dominant reading is 468 px
+(spread within the group 1.05x) but only 26% of usable frames agree, and the
+runner-up group has 116 of 164 frames - the clip does not contain ONE lane.
+Reasons, all visible in the overlay: it shows **two different surfaces** (white
+mat with dark lines, dark mat with white lines - opposite polarity, so the same
+pixel width means different things), the camera is hand-held so `px_per_m`
+genuinely changes, and at the lookahead row often only ONE edge is inside the
+frame (81 frames had a single edge; 26% of those sat against the left border, 40%
+against the right). Verified visually on clean frames: 509-510 px across the real
+edges, i.e. ~1000 px/m at 854 px width, ~750 px/m rescaled to the robot's 640.
+**Do NOT paste that into the config**: it is a phone at a different height and
+pitch, and `px_per_m` belongs to the camera mount.
+-> Unblocked by recording with the robot's own CSI camera on a real lane.
+
 ## Next tasks (in order)
 
 1. **T2 follow-up — BLOCKED on a user decision (asked 7 Nov 2026).** The policy cannot
@@ -359,11 +397,10 @@ can roughly double the score. `STP = 0.25` only for Ackermann, so the prototype
    (currently uncalibrated guesses: 130.0 / 0.3, now per-profile config in
    `configs/<profile>.yaml` - edit there, not in code). Blocked by task 2.
    Done when: offsets/curvatures on recordings look sane and the constants are measured.
-   Partial input already in hand: the phone recording in `data/recordings/` measures
-   964-1610 px/m (lane 0.5 m wide = 482-805 px on screen) and gets 0% detection with
-   the 130 default - the band gate correctly rejects every band as "smeared". That
-   viewpoint is NOT the robot camera, so it proves the scale is wrong, not what the
-   right value is.
+   The phone recording in `data/recordings/` CANNOT give the value: it shows two
+   different surfaces, a hand-held camera, and often a single edge at the lookahead
+   row - see "px_per_m calibration attempt" below for the measurements and for the
+   three tool bugs found on the way. Record with the robot's own CSI camera.
 4. Measure per-frame latency on the Jetson (`tegrastats` + the runner's latency printout).
    Blocked by task 2. Done when: mean/p95 ms per frame recorded in this file.
 5. ~~`SerialActuator` (host side)~~ DONE 7 Nov 2026, commit `c75c7d0`: protocol v1 in

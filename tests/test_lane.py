@@ -16,6 +16,7 @@ from mav.perception.lane import (
     LaneConfig,
     LaneDetector,
     _band_points,
+    _band_points_with_clusters,
     lookahead_row,
 )
 from synthetic_lane import AFFINE_DEFAULTS, expected_offset_affine, make_frame
@@ -242,3 +243,98 @@ def test_detector_defaults_pin_the_measured_track_fix():
     cfg = LaneConfig()
     assert cfg.roi_top == 0.65
     assert cfg.max_band_span_m == 0.8
+
+
+# ---------------------------------------------------------- border artefacts --
+def _lane_mask_with_border_noise(h=120, w=200, line_at=(60, 140), border_px=(2, 3)):
+    """A clean two-line lane, plus 2-3 px of codec noise ON the frame borders.
+
+    This is the shape that broke the real clip. A phone codec leaves a couple of
+    dark pixels against the sensor edge; if a band's cluster splitter treats them
+    as markings, the band appears to show "two edge lines" at column 0 and column
+    w-1 and reports a lane far wider than the real one.
+    """
+    m = np.zeros((h, w), dtype=bool)
+    m[:, line_at[0]:line_at[0] + 3] = True   # left edge line
+    m[:, line_at[1]:line_at[1] + 3] = True   # right edge line
+    n_left, n_right = border_px
+    m[-6:, :n_left] = True                   # noise against the left sensor edge
+    m[-6:, w - n_right:] = True              # ...and the right one
+    return m
+
+
+def _widths(mask, *, border_margin_px, min_cluster_px):
+    """(max per-row width, median per-row width) the detector would use."""
+    widths: dict = {}
+    _band_points_with_clusters(
+        mask, 6, min_px=10, max_gap_px=20.0, width_out=widths,
+        border_margin_px=border_margin_px, min_cluster_px=min_cluster_px,
+    )
+    by_row = [w for _, w in (widths.get("lane_width_by_row") or [])]
+    return (max(by_row) if by_row else 0.0,
+            float(np.median(by_row)) if by_row else 0.0)
+
+
+def test_border_noise_is_not_a_lane_edge():
+    """A cluster running into the frame edge is TRUNCATED, so it is not an edge.
+
+    Measured on a phone recording: 2 dark pixels at column 0 and 1 at column 723
+    were read as two edge lines and reported a lane 723 px wide - the full frame.
+    The real lane there was ~510 px.
+
+    Asserted on the per-row widths, not on the median: the noise sits in only the
+    bottom band or two, so a median over the bands hides it (that is exactly why
+    the detector's own `lane_width_px` looked sane while its bands were garbage).
+    """
+    mask = _lane_mask_with_border_noise()
+    real_span = 140 - 60 + 3  # outer boundary of the left line to the right one
+    worst, median = _widths(mask, border_margin_px=2, min_cluster_px=3.0)
+    assert worst == pytest.approx(real_span, abs=1.0), (
+        f"a band still spans {worst} px; the two lines are only {real_span} px apart"
+    )
+    assert median == pytest.approx(real_span, abs=1.0)
+
+
+def test_border_noise_corrupts_widths_when_the_guard_is_off():
+    """Pins that the GUARD is what fixes it, not some other change."""
+    mask = _lane_mask_with_border_noise()
+    off, _ = _widths(mask, border_margin_px=0, min_cluster_px=2.0)
+    on, _ = _widths(mask, border_margin_px=2, min_cluster_px=3.0)
+    assert off > 1.5 * on, (
+        "without the border guard some band reports a lane far wider than the "
+        f"real one: {off} px vs {on} px"
+    )
+
+
+def test_tiny_specks_do_not_make_a_lane():
+    """Two 2-px specks 500 px apart are not a 500 px lane.
+
+    This is the real clip's failure in miniature (frame 24 had 3 dark pixels in
+    the whole band: 2 at column 0, 1 at column 723). The relative floor
+    `0.05 * total` is useless on a band that holds almost nothing - 5% of 4 px is
+    0.2 px - so an ABSOLUTE floor has to catch it. Without one, the detector
+    reports a lane as wide as the gap between two codec specks.
+    """
+    h, w = 120, 200
+    mask = np.zeros((h, w), dtype=bool)
+    mask[0, 10:12] = True        # speck, mass 2
+    mask[0, 180:182] = True      # speck, mass 2 -> "a 170 px lane" if believed
+    widths: dict = {}
+    _band_points_with_clusters(
+        mask, 6, min_px=1, max_gap_px=20.0, width_out=widths,
+        border_margin_px=2, min_cluster_px=3.0,
+    )
+    by_row = [w_ for _, w_ in (widths.get("lane_width_by_row") or [])]
+    assert not by_row, f"specks were read as a lane: {by_row}"
+
+    # And with the floor at the old value they ARE believed - pinning that the
+    # floor is load-bearing rather than incidental.
+    widths_off: dict = {}
+    _band_points_with_clusters(
+        mask, 6, min_px=1, max_gap_px=20.0, width_out=widths_off,
+        border_margin_px=2, min_cluster_px=2.0,
+    )
+    by_row_off = [w_ for _, w_ in (widths_off.get("lane_width_by_row") or [])]
+    assert by_row_off and max(by_row_off) > 100, (
+        f"expected the specks to be believed without the floor, got {by_row_off}"
+    )
