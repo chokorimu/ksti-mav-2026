@@ -25,11 +25,13 @@ import yaml
 
 from mav.perception.checkpoint import CheckpointConfig
 from mav.perception.lane import LaneConfig
+from mav.perception.obstacle import ObstacleConfig
+from mav.planning.avoid import AvoidConfig
 
 DEFAULT_PROFILE = "prototype"
 
 # YAML has no tuples: these fields arrive as lists and are converted.
-_HUE_FIELDS = frozenset({"checkpoint_hues", "finish_hues"})
+_HUE_FIELDS = frozenset({"checkpoint_hues", "finish_hues", "hues"})
 _PAIR_FIELDS = frozenset({"mask_frac_band"})
 
 # Inclusive (low, high) sanity ranges; None = unbounded on that side. A value
@@ -53,6 +55,17 @@ _RANGES: dict[str, tuple[float | None, float | None]] = {
     "target_span_frac": (0.0, 1.0),
     "max_band_frac": (0.0, 1.0),
     "min_confidence": (0.0, 1.0),
+    # obstacle (cone) detection + the swerve decision
+    "min_col_pixels": (1, None),
+    "merge_gap_px": (0, None),
+    "min_blob_pixels": (1, None),
+    "min_width_frac": (0.0, 1.0),
+    "max_width_frac": (0.0, 1.0),
+    "min_height_frac": (0.0, 1.0),
+    "max_height_frac": (0.0, 1.0),
+    "clearance_m": (0.0, None),
+    "max_offset_m": (0.0, None),
+    "horizon_m": (0.0, None),
 }
 
 
@@ -101,6 +114,30 @@ def load_checkpoint_config(
     where = f"configs/{name}.yaml checkpoint"
     data = load_profile(name, root)
     return _build(CheckpointConfig, _section(data, "checkpoint", where), where)
+
+
+def load_obstacle_config(
+    profile: str | None = None, root: Path | None = None
+) -> ObstacleConfig:
+    """ObstacleConfig for a profile: code defaults, overridden by `obstacle:`.
+
+    The camera scale (`px_per_m`, `bottom_row_m`) is inherited from `lane:` unless
+    overridden here: it is a property of the mount, not of the detector, so moving
+    the camera must stay a single edit instead of two that can drift apart.
+    """
+    name = profile_name(profile)
+    where = f"configs/{name}.yaml obstacle"
+    lane = load_lane_config(name, root)
+    section = {"px_per_m": lane.px_per_m, "bottom_row_m": lane.bottom_row_m}
+    section.update(_section(load_profile(name, root), "obstacle", where))
+    return _build(ObstacleConfig, section, where)
+
+
+def load_avoid_config(profile: str | None = None, root: Path | None = None) -> AvoidConfig:
+    """AvoidConfig for a profile: code defaults, overridden by `avoid:`."""
+    name = profile_name(profile)
+    where = f"configs/{name}.yaml avoid"
+    return _build(AvoidConfig, _section(load_profile(name, root), "avoid", where), where)
 
 
 def _section(data: dict, key: str, where: str) -> dict:

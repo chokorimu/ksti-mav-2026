@@ -27,8 +27,10 @@ import yaml
 
 from mav.config import (
     DEFAULT_PROFILE,
+    load_avoid_config,
     load_checkpoint_config,
     load_lane_config,
+    load_obstacle_config,
     load_profile,
     profile_path,
 )
@@ -186,6 +188,10 @@ def test_every_shipped_profile_parses(profile):
     assert lane.px_per_m > 0.0
     assert cp.checkpoint_hues  # green band present...
     assert cp.finish_hues == ()  # ...finish disabled until read off the arena [A11]
+    obs, av = load_obstacle_config(profile), load_avoid_config(profile)
+    # One camera, one scale: the cone detector must not carry a second copy.
+    assert (obs.px_per_m, obs.bottom_row_m) == (lane.px_per_m, lane.bottom_row_m)
+    assert av.max_offset_m > 0.0 and av.clearance_m > 0.0
 
 
 def test_repo_profiles_are_the_real_files():
@@ -245,3 +251,44 @@ def test_boot_fails_loudly_on_a_bad_key(tmp_root):
     with pytest.raises(ValueError) as exc:
         load_lane_config("prototype", root=tmp_root)
     assert "unknown key(s)" in str(exc.value)
+
+
+# ---------------------------------------------------------------- obstacle / avoid ----
+def test_obstacle_config_inherits_the_camera_scale_from_lane(tmp_root):
+    # The camera mount owns px_per_m: moving the camera is one edit, not two.
+    write_cfg(tmp_root, "p", """
+lane: { px_per_m: 964.0, bottom_row_m: 0.45 }
+obstacle: { hues: [[5.0, 35.0]] }
+""")
+    cfg = load_obstacle_config("p", root=tmp_root)
+    assert (cfg.px_per_m, cfg.bottom_row_m) == (964.0, 0.45)
+    assert cfg.hues == ((5.0, 35.0),)
+
+
+def test_obstacle_config_can_override_the_inherited_scale(tmp_root):
+    write_cfg(tmp_root, "p", "lane: { px_per_m: 130.0 }\nobstacle: { px_per_m: 964.0 }\n")
+    assert load_obstacle_config("p", root=tmp_root).px_per_m == 964.0
+
+
+def test_empty_hue_list_disables_cone_detection(tmp_root):
+    # AR only (rules §8: ARC is optional): no cone colour -> the detector is skipped.
+    write_cfg(tmp_root, "p", "obstacle: { hues: [] }\n")
+    assert load_obstacle_config("p", root=tmp_root).hues == ()
+
+
+def test_unknown_obstacle_key_raises(tmp_root):
+    write_cfg(tmp_root, "p", "obstacle: { hue: [[5.0, 35.0]] }\n")
+    with pytest.raises(ValueError, match="unknown key"):
+        load_obstacle_config("p", root=tmp_root)
+
+
+def test_out_of_range_obstacle_value_raises(tmp_root):
+    write_cfg(tmp_root, "p", "obstacle: { min_saturation: 1.5 }\n")
+    with pytest.raises(ValueError, match="above"):
+        load_obstacle_config("p", root=tmp_root)
+
+
+def test_avoid_config_reads_the_section(tmp_root):
+    write_cfg(tmp_root, "p", "avoid: { clearance_m: 0.10, max_offset_m: 0.14, horizon_m: 1.5 }\n")
+    cfg = load_avoid_config("p", root=tmp_root)
+    assert (cfg.clearance_m, cfg.max_offset_m, cfg.horizon_m) == (0.10, 0.14, 1.5)

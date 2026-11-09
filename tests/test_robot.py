@@ -1,5 +1,9 @@
+from dataclasses import dataclass
 from types import SimpleNamespace as NS
 
+import pytest
+
+from mav.perception.obstacle import Obstacle
 from mav.robot import Driver
 from mav.types import STOP, Command
 
@@ -48,13 +52,33 @@ class SM:
         self.done = True
 
 
+@dataclass(frozen=True)
+class Meas:
+    """The two fields Driver and the fake policy read; frozen so Driver can replace it."""
+    offset_m: float
+    confidence: float = 0.9
+
+
 def good(off=0.1):
-    return NS(offset_m=off, confidence=0.9)
+    return Meas(off)
 
 
-def make(max_hold_s=0.5, tracker=None):
+class Cones:
+    def __init__(self, blobs):
+        self.blobs = blobs
+
+    def detect(self, frame):
+        return self.blobs
+
+
+def cone(lateral_m, distance_m=0.8):
+    return Obstacle(row=300.0, col=320.0, lateral_m=lateral_m, distance_m=distance_m,
+                    width_frac=0.04, height_frac=0.1, pixels=200)
+
+
+def make(max_hold_s=0.5, tracker=None, cones=None):
     det, clock = Detector(), Clock()
-    return det, clock, Driver(det, Policy(), tracker, max_hold_s, clock)
+    return det, clock, Driver(det, Policy(), tracker, max_hold_s, clock, cones=cones)
 
 
 def test_tracks_when_lane_is_seen():
@@ -112,3 +136,29 @@ def test_cross_line_events_update_state_machine():
     sm2 = SM()
     d2("f", sm2)
     assert sm2.done
+
+
+# ---------------------------------------------------------------- avoidance ----
+def test_cone_ahead_shifts_the_aim_point_not_the_measurement():
+    det, _, d = make(cones=Cones([cone(0.05)]))
+    det.meas = good(0.0)
+    cmd = d("f", SM())
+    # Cone slightly right of centre: aim 0.12 m to its left -> -0.07 -> steer left.
+    assert cmd.speed == 0.3 and cmd.curvature == pytest.approx(0.14)
+    assert d.meas.offset_m == 0.0   # the logged measurement stays the real lane offset
+    assert d.avoid["action"] == "swerve"
+
+
+def test_no_cone_leaves_the_command_untouched():
+    det, _, d = make(cones=Cones([]))
+    det.meas = good(0.1)
+    assert d("f", SM()) == Command(0.3, -0.2)
+    assert d.avoid["reason"] == "clear"
+
+
+def test_avoidance_cannot_mask_a_lost_lane():
+    # The lane is 0.9 m off: still lost, even though a swerve target would be in range.
+    det, _, d = make(cones=Cones([cone(-0.5)]))
+    det.meas = good(0.9)
+    d("f", SM())
+    assert d.lost

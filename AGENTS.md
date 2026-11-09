@@ -117,9 +117,16 @@ tests/
     and `app.py` are untouched by it. Only the `sim` profile starts a server (`--dashboard`
     or `dashboard.enabled` in `configs/sim.yaml`); `final` has no such section and stays
     serverless. Tests: `tests/test_dashboard.py`, `tests/test_dashboard_server.py`.
+- `src/mav/perception/obstacle.py` + `src/mav/planning/avoid.py`: cone detection
+    (`ConeDetector`, colour-first, `obstacle:` section) and the pure swerve
+    decision (`choose_offset`, `avoid:` section), wired into `Driver`: the swerve
+    target replaces `offset_m` before `LanePolicy`, and never leaves the lane
+    (hit cone k=0.5 is cheaper than off-track k=0.8). Checkpoints turned out to be
+    markers OUTSIDE the lane (user, 9 Nov 2026), so crossing detection is not
+    needed. Tests: `tests/test_obstacle.py`.
 - **Not written yet:** the firmware's measured constants (m/s->PWM calibration,
     servo model + microsecond range, servo 5 V BEC - all Q1: measure, do not
-    guess), GPIO buttons, checkpoint detection, and the dashboard's browser
+    guess), GPIO buttons, the real cone colour, and the dashboard's browser
     visual check (frontend built in `8875d48`). The firmware itself compiles
     for the Uno; see `firmware/arduino/README.md`.
 

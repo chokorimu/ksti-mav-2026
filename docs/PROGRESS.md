@@ -205,9 +205,16 @@ subagent against the JSON contract fixed in subtask 1; visual verification stays
 DONE 7 Nov 2026 (`8875d48`) — the whole dashboard task is finished except the user's visual
 check. Next: the real-recordings task below.
 
-## Current task: checkpoint / start-finish line detection (task 6 below)
+## Task 6: checkpoint / start-finish line detection — DROPPED 9 Nov 2026
 
-Why it matters: `cp` (checkpoints passed) is the biggest scoring term, and after a
+> **The user reported (9 Nov 2026) that checkpoints are only markers placed OUTSIDE
+> the lane**, so the robot never needs to detect them; the count comes from the
+> organisers, not from our camera. Subtasks 1, 2 and 4 are committed and stay
+> (harmless, tested), subtask 3 (sim rendering of cross-lines) is not worth
+> finishing. The real in-lane hazard is the **orange cone**: see "Obstacle
+> avoidance" below. Do not spend more time on the text in this section.
+
+Why it mattered: `cp` (checkpoints passed) is the biggest scoring term, and after a
 violation the robot is restarted at the last checkpoint — the count must survive
 that (the state machine already does; only the DETECTION is missing).
 
@@ -272,6 +279,37 @@ Split into 4 subtasks (one at a time, commit after each):
       (`tests/test_config.py`); full suite 160 passed (laptop). Only subtask 3
       remains, and it is the user's in-progress work (render.py/lane.py/runner.py
       /scenarios.py/world.py uncommitted - not touched here).
+
+## Current task: obstacle (orange cone) avoidance, rules §8
+
+Why: the user's arena update (9 Nov 2026) — the thing ON the lane is cones, and the
+penalty table decides the whole strategy: hitting a cone `k = 0.5`, leaving the
+track `k = 0.8`. So a swerve is only worth it while it stays inside the lane.
+
+- [x] Detection `src/mav/perception/obstacle.py`: `ConeDetector` -> list of blobs
+      (nearest first) with lateral/distance in metres, reusing `_hsv`/`_hue_mask`/
+      `_runs` from `checkpoint.py`. Colour-first like the cross-line detector, so
+      white/black lane markings and the grey floor can never match. `hues: []`
+      disables it (AR only).
+- [x] Decision `src/mav/planning/avoid.py`: `choose_offset()` is a PURE function
+      (no state, no camera) — pure pursuit's lane offset in, a clamped target out.
+      Picks the side needing the smaller deviation; when neither side fits inside
+      `max_offset_m`, it returns the lane offset unchanged and accepts the cone.
+- [x] Wired into `Driver` (`src/mav/robot.py`): the target REPLACES `offset_m` in
+      the measurement handed to `LanePolicy`, so the policy still steers at the
+      lane, only at a shifted aim point. The lost-lane test uses the MEASURED
+      offset, not the swerve target. No cone detector -> behaviour is unchanged.
+- [x] Config: `obstacle:` (hue band UNCONFIRMED, saturation/value gates, `roi_top`)
+      and `avoid:` (`clearance_m`, `max_offset_m`, `horizon_m`) in
+      `configs/prototype.yaml` and `configs/final.yaml`; `load_obstacle_config()`
+      INHERITS `px_per_m`/`bottom_row_m` from `lane:` so one camera move stays one
+      edit. Tests: `tests/test_obstacle.py` (16), `tests/test_robot.py` (+3),
+      `tests/test_config.py` (+6); full suite 244 passed (laptop).
+- [ ] Not done: rendering cones in the simulator. It needs `render.py` + wiring in
+      `runner.py` (which calls the detector directly, NOT through `Driver`), and
+      both files are the user's active work. Add when the sim can draw a cone.
+- [ ] Not measured: the real cone hue. Until it is read off the arena the detector
+      is a guess (`obstacle.hues`, marked UNCONFIRMED [A11]).
 
 ## Next tasks (in order)
 

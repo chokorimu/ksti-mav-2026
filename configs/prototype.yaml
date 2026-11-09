@@ -25,3 +25,17 @@ lane:
 checkpoint:
   checkpoint_hues: [[90.0, 150.0]]   # green, per guidebook - UNCONFIRMED [A11]
   finish_hues: []                    # [A11] unknown colour: disabled
+# Obstacle (orange cone) detection for the Autonomous Race Challenge, rules §8.
+# Colour-first like `checkpoint:`; the hue band stays UNCONFIRMED until the real
+# cone is measured [A11]. The camera scale is inherited from `lane:` above.
+obstacle:
+  hues: [[5.0, 35.0]]   # orange - UNCONFIRMED
+  min_saturation: 0.45  # the grey floor and white/black markings stay below this
+  min_value: 0.25
+  roi_top: 0.35         # ignore the far field: a distant cone is a few pixels
+# Swerve decision. Hit cone k=0.5 vs off-track k=0.8 (rules §7), so it never leaves
+# the lane to dodge: a cone dead centre in a 0.50 m lane with a 0.20 m car is hit.
+avoid:
+  clearance_m: 0.12     # wanted gap between cone centre and car centre
+  max_offset_m: 0.15    # = (0.50 lane - 0.20 car) / 2, the whole lateral budget
+  horizon_m: 1.2        # further cones are ignored until they are closer

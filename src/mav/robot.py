@@ -1,6 +1,6 @@
 """Real-robot runner for the prototype/final profiles.
 
-camera -> lane detector (+ cross-line tracker) -> LanePolicy -> mapper -> SerialActuator -> Arduino
+camera -> lane detector -> cone detector -> avoid -> LanePolicy -> mapper -> SerialActuator -> Arduino
 
 Same mav.app.step() loop as the simulator; only the camera and actuator are real.
 Usage (via scripts/run.sh):
@@ -17,8 +17,9 @@ import signal
 import sys
 import threading
 import time
-from dataclasses import fields
+from dataclasses import fields, replace
 
+from mav.planning.avoid import choose_offset
 from mav.types import STOP, Command
 
 _EXPECTED_DRIVE = {"prototype": "differential", "final": "ackermann"}
@@ -27,18 +28,25 @@ _UNO_RESET_S = 2.0  # the Uno reboots when the serial port is opened; commands s
 
 
 class Driver:
-    """policy_fn for mav.app.step: detect -> checkpoints -> policy, with a BOUNDED hold on a lost lane.
+    """policy_fn for mav.app.step: detect -> avoid cones -> checkpoints -> policy, with a BOUNDED hold on a lost lane.
 
     LanePolicy(on_lost="hold") returns the `last` command it is given; the policy keeps no state, so this
     class passes it in and stops the robot if the lane stays lost longer than max_hold_s.
+
+    Cone avoidance is applied to the measured lane offset, not to the command: the policy keeps steering
+    at the lane, just at a shifted target. With no cone detector (or `avoid_cfg.enabled: false`) the
+    measurement reaches the policy untouched, so behaviour is unchanged.
     """
 
-    def __init__(self, detector, policy, tracker=None, max_hold_s: float = 0.5, clock=time.monotonic):
+    def __init__(self, detector, policy, tracker=None, max_hold_s: float = 0.5,
+                 clock=time.monotonic, cones=None, avoid_cfg=None):
         self._detector, self._policy, self._tracker = detector, policy, tracker
         self._max_hold_s, self._clock = max_hold_s, clock
+        self._cones, self._avoid_cfg = cones, avoid_cfg
         self.last: Command = STOP
         self.meas = None
         self.lost = False
+        self.avoid: dict = {}
         self._lost_since: float | None = None
 
     def reset(self) -> None:
@@ -53,13 +61,20 @@ class Driver:
                 if ev is not None:
                     sm.finish() if ev.kind == "finish" else sm.add_checkpoint()
         pc = self._policy.cfg
+        # The lost test uses the MEASURED offset, not the swerved target: the lane
+        # is either seen or it is not, regardless of which way we dodge.
         lost = meas is None or meas.confidence < pc.conf_min or abs(meas.offset_m) > pc.max_offset_m
         now = self._clock()
         if not lost:
             self._lost_since = None
         elif self._lost_since is None:
             self._lost_since = now
-        cmd = self._policy.command(meas, last=self.last)
+        steered = meas
+        if meas is not None and self._cones is not None:
+            target, self.avoid = choose_offset(meas.offset_m, self._cones.detect(frame), self._avoid_cfg)
+            if target != meas.offset_m:
+                steered = replace(meas, offset_m=target)
+        cmd = self._policy.command(steered, last=self.last)
         if lost and now - self._lost_since > self._max_hold_s:
             cmd = STOP
         self.last, self.meas, self.lost = cmd, meas, lost
@@ -98,8 +113,8 @@ def main(argv: list[str] | None = None) -> int:
 
     # Heavy imports here so Driver stays importable (and testable) without the rest of the repo.
     from mav.app import step
-    from mav.config import (load_checkpoint_config, load_lane_config, load_profile,
-                            profile_name, repo_root)
+    from mav.config import (load_avoid_config, load_checkpoint_config, load_lane_config,
+                            load_obstacle_config, load_profile, profile_name, repo_root)
     from mav.control.mapping import AckermannMapper, DifferentialMapper
     from mav.control.state_machine import RobotStateMachine
     from mav.io.actuator import SafeActuator, SerialActuator, open_serial_port
@@ -107,6 +122,7 @@ def main(argv: list[str] | None = None) -> int:
     from mav.io.camera import open_csi, open_usb, open_video
     from mav.perception.checkpoint import CrossLineDetector, CrossLineTracker
     from mav.perception.lane import LaneDetector
+    from mav.perception.obstacle import ConeDetector
     from mav.planning.lane_policy import LanePolicy, LanePolicyConfig
     from mav.types import load_vehicle_params
 
@@ -129,6 +145,10 @@ def main(argv: list[str] | None = None) -> int:
     detector = LaneDetector(lane_cfg)
     tracker = (CrossLineTracker(CrossLineDetector(cp_cfg))
                if cp_cfg.checkpoint_hues or cp_cfg.finish_hues else None)
+    obs_cfg, avoid_cfg = load_obstacle_config(profile), load_avoid_config(profile)
+    # No cones expected (AR only) or swerving turned off: skip the detector, it is
+    # a full-frame HSV pass and would be pure cost.
+    cones = ConeDetector(obs_cfg) if obs_cfg.hues and avoid_cfg.enabled else None
     cam_sec = cfg.get("camera") or {}
     act_sec = cfg.get("actuator") or {}
     port_name = args.port or act_sec.get("port")
@@ -149,7 +169,7 @@ def main(argv: list[str] | None = None) -> int:
         time.sleep(_UNO_RESET_S)
     actuator = SafeActuator(SerialActuator(mapper, ser), max_speed_mps=params.max_speed_mps, timeout_s=0.3)
 
-    driver = Driver(detector, policy, tracker, max_hold_s)
+    driver = Driver(detector, policy, tracker, max_hold_s, cones=cones, avoid_cfg=avoid_cfg)
     buttons = QueueButtons()
     sm = RobotStateMachine()
     sm.boot_done()
@@ -184,6 +204,7 @@ def main(argv: list[str] | None = None) -> int:
                 off = f"{m.offset_m:+.2f}" if m else "  -  "
                 print(f"{sm.state.value:10s} cp={sm.checkpoints} lost={int(driver.lost)} off={off} "
                       f"cmd=({driver.last.speed:.2f},{driver.last.curvature:+.2f}) "
+                      f"avo={driver.avoid.get('action', '-')} "
                       f"line={ser.last if args.dry_run else '-'} {ms:.0f}ms")
             time.sleep(max(0.0, period - (time.perf_counter() - t0)))
     except KeyboardInterrupt:

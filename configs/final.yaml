@@ -21,3 +21,14 @@ lane:
 checkpoint:
   checkpoint_hues: [[90.0, 150.0]]   # green, per guidebook - UNCONFIRMED [A11]
   finish_hues: []                    # [A11] unknown colour: disabled
+# Obstacle (orange cone) detection, rules §8 (ARC). Set `hues: []` to run AR only
+# and skip the detector entirely. UNCONFIRMED until the real cone is measured.
+obstacle:
+  hues: [[5.0, 35.0]]   # orange - UNCONFIRMED
+  min_saturation: 0.45
+  min_value: 0.25
+  roi_top: 0.35
+avoid:
+  clearance_m: 0.12
+  max_offset_m: 0.15    # (0.50 lane - 0.20 car) / 2
+  horizon_m: 1.2

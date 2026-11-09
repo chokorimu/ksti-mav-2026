@@ -16,7 +16,13 @@ Only facts confirmed by the user are in "Confirmed". Everything else is a questi
   `ackermann` silently stops using `track_width_mm` while requiring `wheel_base_mm` and
   `max_steer_deg` (both still `null`, so `load_vehicle_params()` will refuse to start
   `final` until they are measured — that refusal is the reminder).
-- Final drivetrain: the single rear motor drives both rear wheels through a mechanical
+- **Emergency stop cuts the MOTOR rail only; the Jetson stays powered** (user,
+  9 Nov 2026). That is the right split and it constrains the design: the e-stop must
+  interrupt the L298N supply (or its ENA/ENB enables) in hardware, independent of any
+  software, while the Jetson keeps running so the checkpoint count and the state
+  machine survive the stop. A software-only stop is not acceptable — if the Jetson
+  hangs, nothing would stop the motors.
+- **Final drivetrain: the single rear motor drives both rear wheels through a mechanical
   differential (user, 7 Nov 2026).
 - Motor/servo control path: **Arduino over USB serial** (user decision, 7 Nov 2026).
   Jetson stays the CV brain; the Arduino drives the motor driver and servo. The Jetson
@@ -110,7 +116,6 @@ module (v1/v2/v3/GS) decides whether a driver/DTB update is needed on JetPack 6.
 ## Still unknown (needed before writing the real actuator/camera code)
 - Motor driver model(s), motor type, gearbox.
 - Battery type, voltage, capacity; regulator(s) feeding the Jetson and the motors.
-- Emergency stop circuit: what it cuts (motor power, or only a signal?).
 - Start button: which pin, which input.
 - Is the steering linkage true Ackermann geometry (affects the 0.25 bonus **[A1]**)?
 - Servo model, steering angle range, wheel base and track width (measured, in mm).
