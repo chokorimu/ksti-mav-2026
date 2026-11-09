@@ -315,10 +315,16 @@ def calibrate(video_path: str, *, lane_m: float = 0.50, profile: str | None = No
     print(f"  ratio            = {derived / current.px_per_m:.2f}x")
     print()
     # Resolution trap: px_per_m is PIXELS per metre, so the same wall is a
-    # different number of pixels at a different frame width. The robot's CSI
-    # pipeline delivers 640x360; a phone clips at 854x480. A value measured on a
-    # clip of a different width is off by exactly that ratio.
-    robot_w = 640
+    # different number of pixels at a different frame width. A phone clip at
+    # 854x480 gives a different answer than the robot camera at 640x360.
+    #
+    # Read from the pipeline rather than hardcoding 640: this is the number the
+    # value will be applied at, so it must follow the pipeline if it changes.
+    # (Confirmed on the robot 10 Nov 2026: csi_pipeline outputs 640x360, and the
+    # runner prints the same size at startup.)
+    from mav.io.camera import csi_pipeline
+
+    robot_w = int(csi_pipeline().split("width=")[-1].split(",")[0])
     if frame_w and frame_w != robot_w:
         print(f"  NOTE: this clip is {frame_w} px wide, the robot camera is {robot_w}.")
         print(f"  px_per_m is PIXELS per metre, so a different frame width needs a")

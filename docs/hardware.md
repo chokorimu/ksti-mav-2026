@@ -294,6 +294,33 @@ the low end is correct by construction.
 loaded one, so a wheels-lifted sweep measures the wrong quantity. The device has to
 drive.
 
+### Recording a clip for `px_per_m` (Q7)
+
+`calibrate_scale` needs a video file, and the file has to come from the ROBOT
+camera, because `px_per_m` belongs to the camera mount. The runner can write one:
+
+```bash
+scripts/run.sh prototype --dry-run --record data/recordings/lane.mp4
+# press `s` + Enter, push the robot slowly along a real 0.50 m lane,
+# then Ctrl+C
+PYTHONPATH=src python -m mav.tools.calibrate_scale data/recordings/lane.mp4
+```
+
+`--dry-run` keeps the motors dead, so the robot can be pushed by hand and the clip
+is safe to take. Frames are only written while RUN, which is why `s` is needed -
+`app.step` reads the camera only in that state.
+
+`--record` wraps the camera and writes `read()`'s return value, so the clip is
+**exactly** what the detector sees. That matters: `px_per_m` is pixels per metre at
+a specific frame size, so a clip from a different pipeline (gst-launch, a phone)
+could differ in size or colour conversion and mis-scale every offset silently. The
+runner prints the frame size at startup (`camera csi sensor 0: 640x360`) and
+`RecordingCamera` prints it again on close.
+
+If OpenCV lacks the MPEG-4 encoder on this image, the recorder falls back to
+MJPG in a `.avi` beside the requested path and says so - it does not abort a
+session the camera is already delivering to.
+
 ### Procedure
 Safety first: e-stop in hand and tested, motors running only on the floor, a clear
 straight run of at least 4 m, the same surface for every point, and the battery

@@ -485,3 +485,59 @@ def test_main_reaches_the_control_loop_with_a_serial_port(monkeypatch):
 
     assert robot.main(["--port", "/dev/ttyCH341USB0"]) == 0
     assert opened == ["/dev/ttyCH341USB0"]
+
+
+def test_record_flag_wraps_the_camera_before_anything_reads_it(monkeypatch, tmp_path):
+    """`--record` must capture the detector's input, so the wrap happens early.
+
+    If the wrapper were installed after the control loop started, the first frames
+    would be missing; if it were installed as a second pipeline, the clip could
+    differ in size from what the detector sees - and lane.px_per_m is pixels per
+    metre at a specific frame size.
+    """
+    import numpy as np
+
+    import mav.io.camera as cam
+    import mav.io.camera as camera_module
+    import mav.robot as robot
+
+    class FakeCam:
+        def __init__(self):
+            self.n = 3
+
+        def read(self):
+            if self.n <= 0:
+                return None
+            self.n -= 1
+            return np.zeros((360, 640, 3), dtype=np.uint8)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(cam, "open_csi", lambda **kw: FakeCam())
+    monkeypatch.setattr(robot, "_stdin_buttons", lambda *a, **k: None)
+    monkeypatch.setenv("MAV_PROFILE", "prototype")
+
+    made = []
+    real_cls = camera_module.RecordingCamera
+
+    class Spy(real_cls):
+        def __init__(self, inner, path, **kw):
+            made.append(path)
+            super().__init__(inner, path, log=lambda _s: None, **kw)
+
+    monkeypatch.setattr(camera_module, "RecordingCamera", Spy)
+
+    calls = []
+
+    def fake_sleep(_s):
+        calls.append(1)
+        if len(calls) > 2:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(robot.time, "sleep", fake_sleep)
+
+    out = str(tmp_path / "clip.mp4")
+    assert robot.main(["--dry-run", "--record", out]) == 0
+    assert made == [out], "the camera was not wrapped for recording"
+    assert (tmp_path / "clip.mp4").exists(), "no recording was written"

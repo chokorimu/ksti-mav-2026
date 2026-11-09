@@ -170,6 +170,12 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="mav robot")
     ap.add_argument("--dry-run", action="store_true", help="no serial port; print the protocol lines")
     ap.add_argument("--video", help="replay a recording instead of the camera")
+    ap.add_argument("--record", metavar="PATH",
+                    help="write the frames the DETECTOR sees to this file (use with "
+                         "--dry-run to record without motors). Press `s` to start "
+                         "recording: frames are only captured while RUN")
+    ap.add_argument("--record-fps", type=float, default=None,
+                    help="fps to store in the recording (default: the control rate)")
     ap.add_argument("--port", help="serial port, overrides configs/<profile>.yaml")
     ap.add_argument("--hz", type=float, help="control rate, overrides configs/<profile>.yaml")
     args = ap.parse_args(argv)
@@ -250,6 +256,17 @@ def main(argv: list[str] | None = None) -> int:
     else:
         raise SystemExit(f"{where}: camera.kind must be 'csi' or 'usb' (or use --video)")
 
+    # --record wraps the camera BEFORE anything reads it, so the clip contains
+    # exactly the frames the detector sees. A separate gst-launch recording would
+    # be a second pipeline that can differ in size or colour conversion, and
+    # lane.px_per_m is pixels per metre at a specific frame size.
+    if args.record:
+        from mav.io.camera import RecordingCamera
+
+        camera = RecordingCamera(camera, args.record,
+                                 fps=args.record_fps or hz)
+        cam_desc += f" -> recording {args.record}"
+
     # Prove the camera really delivers, and print the geometry. A camera that
     # opens but never produces a frame otherwise looks like a robot that simply
     # refuses to move; and `lane.px_per_m` is pixels per metre AT THIS FRAME
@@ -285,6 +302,11 @@ def main(argv: list[str] | None = None) -> int:
     mode = "DRY-RUN" if args.dry_run else f"serial {port_name}"
     print(f"profile={profile} drive={params.drive} {hz:g} Hz {mode}\n"
           "type `s` + Enter = START | Enter or anything else = EMERGENCY | Ctrl+C = exit")
+    if args.record:
+        # Frames are only captured while RUN, because app.step reads the camera
+        # only then. Saying so avoids a silent empty file.
+        print(f"recording to {args.record} - press `s` to start capturing "
+              f"(frames are only written while RUN), Ctrl+C to stop")
     period, last_report, no_frame = 1.0 / hz, 0.0, 0
     try:
         while True:
