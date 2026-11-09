@@ -207,22 +207,35 @@ def test_boot_validates_both_sections():
         assert "px_per_m=130.0" in out.stdout
 
 
-def test_boot_fails_loudly_on_unmeasured_vehicle_params():
-    """The real-robot path must refuse to start while the robot is unmeasured.
+def test_boot_refuses_unmeasured_values_per_drive():
+    """The real-robot path must refuse to start while ITS drive is unmeasured.
 
-    `configs/vehicle.yaml` still has `track_width_mm: null` (Q1), and
-    `load_vehicle_params()` raises on any null. That is the intended behaviour
+    `prototype` is differential and its `track_width_mm` is measured (250 mm,
+    9 Nov 2026), so it boots. `final` is ackermann and needs `wheel_base_mm` and
+    `max_steer_deg`, both still null (Q1): that is the intended behaviour
     (AGENTS.md rule 2: never guess hardware facts), so boot exits non-zero and
-    names the missing key instead of silently driving an unknown robot.
+    names a missing key instead of silently driving an unknown robot.
     """
-    env = {**os.environ, "PYTHONPATH": str(REPO / "src"), "MAV_PROFILE": "prototype"}
-    out = subprocess.run(
-        [sys.executable, "-m", "mav"], env=env, cwd=REPO,
-        capture_output=True, text=True, timeout=60,
-    )
-    assert out.returncode != 0
-    assert "track_width_mm" in out.stderr
-    assert "measure the robot" in out.stderr
+    def boot(profile):
+        env = {**os.environ, "PYTHONPATH": str(REPO / "src"), "MAV_PROFILE": profile}
+        return subprocess.run(
+            [sys.executable, "-m", "mav"], env=env, cwd=REPO,
+            capture_output=True, text=True, timeout=60,
+        )
+
+    proto = boot("prototype")
+    # It boots past validation and then fails on the CSI camera, which does not
+    # exist on a laptop. What matters is that it did NOT refuse on the params.
+    assert "measure the robot" not in proto.stderr
+
+    final = boot("final")
+    # Two-step refusal, both loud:
+    #   1. vehicle.yaml still says drive: differential -> the profile check fires;
+    #   2. after switching drive: ackermann, load_vehicle_params() demands
+    #      wheel_base_mm + max_steer_deg, which are still null.
+    # Either message is acceptable here; both name what to measure.
+    assert final.returncode != 0
+    assert "ackermann" in final.stderr or "measure the robot" in final.stderr
 
 
 def test_boot_fails_loudly_on_a_bad_key(tmp_root):

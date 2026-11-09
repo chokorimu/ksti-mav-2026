@@ -10,6 +10,12 @@ Only facts confirmed by the user are in "Confirmed". Everything else is a questi
 - Final robot (planned): 1 servo for steering + 1 motor for the rear wheel.
 - Camera: CSI interface, Raspberry Pi camera module (user, 7 Nov 2026). Exact module
   (v1/v2/v3/GS) still to verify on the device; `nvarguscamerasrc` normally handles all of them.
+- **Prototype track width: 250 mm** (user, 9 Nov 2026) — left wheel centre to right
+  wheel centre, measured. It feeds `DifferentialMapper`, so it must be re-measured for
+  `final`: `configs/vehicle.yaml` is one file for both drives, and switching `drive:` to
+  `ackermann` silently stops using `track_width_mm` while requiring `wheel_base_mm` and
+  `max_steer_deg` (both still `null`, so `load_vehicle_params()` will refuse to start
+  `final` until they are measured — that refusal is the reminder).
 - Final drivetrain: the single rear motor drives both rear wheels through a mechanical
   differential (user, 7 Nov 2026).
 - Motor/servo control path: **Arduino over USB serial** (user decision, 7 Nov 2026).
