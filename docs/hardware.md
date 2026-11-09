@@ -120,6 +120,10 @@ The check runs *before* the camera opens on purpose: the first version crashed
 after the Argus/GStreamer log, so a missing Python package looked like a camera
 fault.
 
+**Finding the port on the Jetson.** `scripts/flash_firmware.sh prototype --list-ports`
+works there even though `pio` does not (the AVR toolchain is x86-only): listing
+ports is pure bash and deliberately sits before the `pio` check.
+
 **Wrong serial port.** `configs/prototype.yaml` no longer hardcodes one
 (`actuator: { type: serial }`). The runner uses the single board that is plugged in
 and refuses to guess when several are. Override with `--port /dev/ttyUSB0` or add

@@ -54,11 +54,6 @@ case "$variant" in
     ;;
 esac
 
-command -v pio >/dev/null 2>&1 || {
-  echo "pio not found - run scripts/setup_dev.sh first (pip install platformio)" >&2
-  exit 1
-}
-
 # Candidate ports: ttyACM* (native USB, e.g. a genuine Nano/ATmega16U2) and
 # ttyUSB* (USB-serial bridge, e.g. a CH340 Nano clone). Never hardcode a name.
 ports=()
@@ -66,14 +61,23 @@ for p in /dev/ttyACM* /dev/ttyUSB*; do
   [ -e "$p" ] && ports+=("$p")
 done
 
+# Listing ports is pure bash and must work BEFORE the pio check: the Jetson has
+# no pio (the AVR toolchain is x86-only) and is exactly where you need to find
+# out which port the Nano landed on.
 if [ "$list_ports" -eq 1 ]; then
   if [ "${#ports[@]}" -eq 0 ]; then
-    echo "No serial ports found"
+    echo "No serial ports found (/dev/ttyACM* /dev/ttyUSB*) - is the Arduino plugged in?"
   else
     printf '%s\n' "${ports[@]}"
   fi
   exit 0
 fi
+
+command -v pio >/dev/null 2>&1 || {
+  echo "pio not found - run scripts/setup_dev.sh first (pip install platformio)." >&2
+  echo "Listing ports needs no pio: scripts/flash_firmware.sh prototype --list-ports" >&2
+  exit 1
+}
 
 if [ "$compile_only" -eq 0 ]; then
   if [ "${#ports[@]}" -eq 0 ]; then

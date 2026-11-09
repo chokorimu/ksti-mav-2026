@@ -258,3 +258,50 @@ def test_the_sketches_do_not_reimplement_the_speed_map():
         assert "* MPS_TO_PWM" not in body, (
             f"{name}.ino still does the arithmetic itself instead of calling MavCore"
         )
+
+
+# ------------------------------------------------------- flash_firmware.sh --
+def test_list_ports_does_not_depend_on_platformio():
+    """The Jetson has no pio (the AVR toolchain is x86-only) - and is exactly
+    where you need to find out which port the Nano landed on.
+
+    `--list-ports` is pure bash globbing, so its block must come BEFORE the
+    `command -v pio` guard. Asserted on the script's structure rather than by
+    running it, because the script sources .venv/bin/activate itself: any PATH
+    a test sets is undone, and pio is found on a dev machine either way.
+    """
+    script = (REPO / "scripts" / "flash_firmware.sh").read_text()
+    list_block = script.find('if [ "$list_ports" -eq 1 ]')
+    pio_guard = script.find("command -v pio")
+    assert list_block != -1, "--list-ports handling not found"
+    assert pio_guard != -1, "pio guard not found"
+    assert list_block < pio_guard, (
+        "--list-ports sits behind the pio guard; it would fail on the Jetson, "
+        "which has no pio"
+    )
+
+
+def test_list_ports_actually_runs_and_says_something():
+    """Either a real port or an explicit 'nothing plugged in' - never silence."""
+    import subprocess
+
+    result = subprocess.run(
+        ["bash", str(REPO / "scripts" / "flash_firmware.sh"), "prototype", "--list-ports"],
+        capture_output=True, text=True, cwd=str(REPO),
+    )
+    assert result.returncode == 0, result.stderr
+    out = result.stdout.strip()
+    assert out.startswith("/dev/tty") or "No serial ports found" in out
+
+
+def test_flash_script_never_hardcodes_a_port_name():
+    """AGENTS.md: do not hardcode serial port names.
+
+    A genuine Nano is /dev/ttyACM*, a CH340 clone is /dev/ttyUSB* - any fixed
+    name is wrong on half the boards.
+    """
+    script = (REPO / "scripts" / "flash_firmware.sh").read_text()
+    for line in script.splitlines():
+        code = line.split("#")[0]
+        assert "/dev/ttyACM0" not in code, f"hardcoded port in: {line}"
+        assert "/dev/ttyUSB0" not in code, f"hardcoded port in: {line}"
