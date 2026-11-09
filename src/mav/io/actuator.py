@@ -112,31 +112,55 @@ def require_serial():
     return serial
 
 
+# Device-name families a USB-serial adapter can appear as. pyserial's own
+# comports() globs a HARDCODED list (/dev/ttyS*, ttyUSB*, ttyXRUSB*, ttyACM*,
+# ttyAMA*, rfcomm*, ttyAP* - see serial/tools/list_ports_linux.py), which does
+# NOT include /dev/ttyCH341*, the name WCH's out-of-tree driver creates. So a
+# CH340 under that driver is invisible to pyserial entirely, no matter how the
+# results are filtered. We therefore glob the nodes ourselves.
+# Onboard /dev/ttyS* is deliberately absent: it is never an Arduino, and a
+# desktop exposes 32 of them.
+_PORT_GLOBS = ("ttyACM*", "ttyUSB*", "ttyCH341*", "ttyXRUSB*", "ttyAMA*",
+               "ttyTHS*", "ttyAP*")
+
+
+def _dev_nodes(dev_dir: str = "/dev") -> list[str]:
+    """Serial-looking device nodes that exist, by glob. Injectable for tests."""
+    from pathlib import Path
+
+    found: list[str] = []
+    for pattern in _PORT_GLOBS:
+        found.extend(str(p) for p in sorted(Path(dev_dir).glob(pattern)))
+    return found
+
+
 def list_serial_ports() -> list[str]:
     """Device names of serial ports that could plausibly be the Arduino.
 
-    Only real USB devices. A desktop exposes dozens of onboard /dev/ttyS* ports
-    that can never be the Arduino, and listing them buries the one that matters.
+    Two sources, unioned, because neither is complete on its own:
+    - pyserial's comports(): gives vid/pid, and covers the usual names.
+    - a glob of /dev: the only way to see names pyserial does not know about.
 
-    The name list matters more than it looks. A CH340 clone normally appears as
-    /dev/ttyUSB0, but WCH's own out-of-tree driver (`usb_ch341`, which some Jetson
-    images have) creates **/dev/ttyCH341USB0** instead - and a name filter that
-    only knows ttyUSB/ttyACM reports "no Arduino found" while the board sits there
-    happily bound to a driver. That happened on the Jetson on 10 Nov 2026.
+    The second one is not theoretical. On the Jetson (10 Nov 2026) a CH340 was
+    bound to WCH's `usb_ch341` driver, which names its device /dev/ttyCH341USB0.
+    pyserial's hardcoded glob list does not include that name, so it reported no
+    ports at all while `ls /dev/ttyCH341*` clearly showed one. Two rounds of
+    wrong diagnosis followed from trusting that empty list.
     """
     require_serial()  # raises SerialUnavailable with the install hint
     from serial.tools import list_ports
 
-    ports = list(list_ports.comports())
-    usb = [p.device for p in ports if p.vid is not None]
-    if usb:
-        return usb
-    # A platform (or vendor driver) that does not report USB metadata: fall back
-    # to the device-name families a USB-serial adapter can appear as. Onboard
-    # /dev/ttyS* is deliberately absent - it is never an Arduino.
-    prefixes = ("/dev/ttyACM", "/dev/ttyUSB", "/dev/ttyCH341", "/dev/ttyXRUSB",
-                "/dev/ttyAMA", "/dev/ttyTHS", "COM")
-    return [p.device for p in ports if p.device.startswith(prefixes)]
+    prefixes = tuple("/dev/" + g.rstrip("*") for g in _PORT_GLOBS)
+    names: list[str] = []
+    for p in list_ports.comports():
+        # Keep USB devices, plus anything whose name we recognise. Onboard
+        # platform UARTs (ttyS*) match neither and are dropped.
+        if p.vid is not None or p.device.startswith(prefixes):
+            names.append(p.device)
+    for node in _dev_nodes():
+        if node not in names:
+            names.append(node)
+    return names
 
 
 def open_serial_port(port: str, baudrate: int = SerialActuator.BAUDRATE):

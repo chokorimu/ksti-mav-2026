@@ -149,10 +149,22 @@ bound, and that name is the fastest way to tell the kernel driver (`ch341`) from
 the vendor one (`usb_ch341`). Checking it first would have skipped both wrong
 turns. Do not assume a CH340 always means `/dev/ttyUSB0`.
 
-**Why this was missed twice:** both `list_serial_ports()` and
-`flash_firmware.sh` knew only `/dev/ttyACM*` and `/dev/ttyUSB*`. Both now use one
-shared enumeration that also covers `/dev/ttyCH341*`, so the runner and the flash
-script cannot disagree with each other.
+**Why this was missed three times, and the real trap:** pyserial's own
+`comports()` globs a **hardcoded list of names** -
+`/dev/ttyS*`, `ttyUSB*`, `ttyXRUSB*`, `ttyACM*`, `ttyAMA*`, `rfcomm*`, `ttyAP*`
+(see `serial/tools/list_ports_linux.py`) - and `/dev/ttyCH341*` is **not** in it.
+So the device was invisible to pyserial before any filtering ran:
+`list_serial_ports()` returned `[]` while `ls /dev/ttyCH341*` showed the port.
+Filtering the results could never have fixed it.
+
+`list_serial_ports()` therefore **globs `/dev` itself** and unions that with
+pyserial's output (pyserial still contributes vid/pid where it can see the
+device). `flash_firmware.sh` calls the same helper. Both now find a CH340 under
+the WCH driver.
+
+**Symptom to recognise:** `--list-ports` finds a port but the runner says none
+was found. That mismatch means the two are enumerating differently - which is
+exactly what a hardcoded name list in a third-party library causes.
 
 ## Startup troubleshooting on the Jetson
 

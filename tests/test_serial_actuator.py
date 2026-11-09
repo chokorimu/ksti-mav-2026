@@ -276,6 +276,7 @@ def test_vendor_ch341_driver_port_is_not_dropped(monkeypatch):
     tools = types.ModuleType("serial.tools")
     tools.list_ports = FakeListPorts
     monkeypatch.setitem(sys.modules, "serial.tools", tools)
+    monkeypatch.setattr(A, "_dev_nodes", lambda *a, **k: [])
 
     assert A.list_serial_ports() == ["/dev/ttyCH341USB0"]
 
@@ -300,6 +301,7 @@ def test_onboard_uart_is_still_excluded_from_the_fallback(monkeypatch):
     tools = types.ModuleType("serial.tools")
     tools.list_ports = FakeListPorts
     monkeypatch.setitem(sys.modules, "serial.tools", tools)
+    monkeypatch.setattr(A, "_dev_nodes", lambda *a, **k: [])
 
     assert A.list_serial_ports() == []
 
@@ -317,3 +319,66 @@ def test_flash_script_finds_the_vendor_port_name():
         "the flash script should reuse the runner's port enumeration"
     )
     assert "ttyCH341" in script, "the glob fallback must cover WCH's driver name"
+
+
+def test_port_pyserial_cannot_see_is_still_found(monkeypatch):
+    """THE bug, exactly as it happened on the Jetson on 10 Nov 2026.
+
+    pyserial's comports() globs a hardcoded list - ttyS*, ttyUSB*, ttyXRUSB*,
+    ttyACM*, ttyAMA*, rfcomm*, ttyAP* (serial/tools/list_ports_linux.py). It does
+    NOT know /dev/ttyCH341*, the name WCH's out-of-tree driver creates. So the
+    device was invisible to pyserial and list_serial_ports() returned [] while
+    `ls /dev/ttyCH341*` clearly showed the port. `--list-ports` found it only
+    because the bash fallback globbed the name itself.
+
+    A filter cannot fix this: the device never reaches the filter. Only globbing
+    /dev does.
+    """
+    import types
+
+    class EmptyListPorts:
+        @staticmethod
+        def comports():
+            return []          # pyserial sees nothing at all
+
+    monkeypatch.setitem(sys.modules, "serial", type("S", (), {})())
+    tools = types.ModuleType("serial.tools")
+    tools.list_ports = EmptyListPorts
+    monkeypatch.setitem(sys.modules, "serial.tools", tools)
+    monkeypatch.setattr(A, "_dev_nodes", lambda *a, **k: ["/dev/ttyCH341USB0"])
+
+    assert A.list_serial_ports() == ["/dev/ttyCH341USB0"]
+
+
+def test_dev_nodes_globs_the_vendor_name_and_skips_onboard_uart(tmp_path):
+    """The glob is the ground truth for 'does this device node exist'."""
+    for name in ("ttyCH341USB0", "ttyUSB0", "ttyACM0", "ttyS0", "ttyS1", "null"):
+        (tmp_path / name).write_text("")
+
+    found = [p.rsplit("/", 1)[-1] for p in A._dev_nodes(str(tmp_path))]
+    assert found == ["ttyACM0", "ttyUSB0", "ttyCH341USB0"] or sorted(found) == sorted(
+        ["ttyACM0", "ttyUSB0", "ttyCH341USB0"]
+    )
+    assert "ttyS0" not in found
+    assert "null" not in found
+
+
+def test_results_are_deduplicated(monkeypatch):
+    """A port can come from both pyserial and the glob; list it once."""
+    import types
+
+    class One:
+        device, vid = "/dev/ttyUSB0", 0x1A86
+
+    class LP:
+        @staticmethod
+        def comports():
+            return [One()]
+
+    monkeypatch.setitem(sys.modules, "serial", type("S", (), {})())
+    tools = types.ModuleType("serial.tools")
+    tools.list_ports = LP
+    monkeypatch.setitem(sys.modules, "serial.tools", tools)
+    monkeypatch.setattr(A, "_dev_nodes", lambda *a, **k: ["/dev/ttyUSB0"])
+
+    assert A.list_serial_ports() == ["/dev/ttyUSB0"]
