@@ -87,6 +87,20 @@ bool LineProtocol::tick(unsigned long now_ms) {
   return false;
 }
 
+int speed_to_pwm(float speed_mps, float pwm_per_mps, float deadband, int pwm_max) {
+  // Not calibrated, or told to stop: 0 is the safe output in both cases. A
+  // "stop" that emitted `deadband` would be a car that never stops.
+  if (pwm_per_mps <= 0.0f || speed_mps == 0.0f) return 0;
+  const bool forward = speed_mps > 0.0f;
+  const float mag = forward ? speed_mps : -speed_mps;
+  // Deadband first, then the slope above it. No <cmath>: the AVR toolchain does
+  // not ship the C++ standard library headers, and a branch is cheaper anyway.
+  const float offset = deadband > 0.0f ? deadband : 0.0f;
+  int pwm = static_cast<int>(mag * pwm_per_mps + offset + 0.5f);
+  if (pwm > pwm_max) pwm = pwm_max;
+  return forward ? pwm : -pwm;
+}
+
 bool LineProtocol::safe_required() const {
   return timed_out_ || last_verb_ == 'S';
 }

@@ -15,6 +15,25 @@ namespace mav {
 #ifndef MAV_WATCHDOG_MS
 #define MAV_WATCHDOG_MS 500UL
 #endif
+// Wheel speed (m/s) -> PWM counts. Open loop on purpose: the hardware has no
+// encoders, so this is the ONLY link between "m/s" and "PWM", and it is a
+// physical measurement, never a guess.
+//
+// Why it takes two numbers and not one. A DC motor does not turn at all below a
+// breakaway PWM: the L298N's drop plus static friction hold it still, and only
+// above that threshold does speed rise roughly linearly with PWM. So
+//
+//     pwm = deadband + |speed| * pwm_per_mps          for speed != 0
+//     pwm = 0                                         for speed == 0
+//
+// A single gain fitted at full throttle OVERSTATES the speed at low PWM (it
+// assumes the line passes through the origin), and the KSTI policy drives at
+// 0.15-0.3 m/s - the low end - so that error lands exactly where it hurts.
+//
+// speed == 0 returns 0 rather than `deadband`, so "stop" really means coast.
+// pwm_per_mps <= 0 means "not calibrated" (still 0) and returns 0, which is the
+// safe state rather than a moving one. Result is clamped to +-pwm_max.
+int speed_to_pwm(float speed_mps, float pwm_per_mps, float deadband, int pwm_max);
 
 // A parsed drive command. Field meaning depends on the verb (protocol.md):
 //   'W' (prototype): a = left wheel speed m/s,  b = right wheel speed m/s

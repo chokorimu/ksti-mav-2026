@@ -121,6 +121,75 @@ EOF
 If `nvarguscamerasrc` fails, check the camera ribbon seating and `dmesg | grep -i cam`; the exact
 module (v1/v2/v3/GS) decides whether a driver/DTB update is needed on JetPack 6.2.3.
 
+
+## Speed calibration: `MPS_TO_PWM` and `PWM_DEADBAND` (MEASURE, do not guess)
+There are no encoders, so `m/s -> PWM` is open loop: it is the only link between a
+commanded speed and a real one, and a wrong value is never noticed by the car — it
+simply drives at the wrong speed, and the lane offsets and cone distances inherit
+the error.
+
+**Why two numbers.** A DC motor does not turn at all below a breakaway PWM: the
+L298N's voltage drop plus static friction hold it still, and only above that does
+speed rise roughly linearly with PWM.
+
+```
+pwm = PWM_DEADBAND + speed_mps * MPS_TO_PWM        (and 0 when the speed is 0)
+```
+
+The obvious one-number calibration — measure the top speed and set
+`K = 255 / top` — draws that line through the ORIGIN and so overstates the speed at
+low PWM. The policy drives at 0.15-0.3 m/s, the low end, which is exactly where that
+error lands: the car either refuses to creep or lurches. With the two-number model
+the low end is correct by construction.
+
+**Measure on the floor, not wheels-lifted.** A lifted wheel spins faster than a
+loaded one, so a wheels-lifted sweep measures the wrong quantity. The device has to
+drive.
+
+### Procedure
+Safety first: e-stop in hand and tested, motors running only on the floor, a clear
+straight run of at least 4 m, the same surface for every point, and the battery
+charged the same way each time (a sagging pack changes the speed).
+
+1. Flash the firmware with a **provisional** `MPS_TO_PWM` (300 is a fine starting
+   point) and `PWM_DEADBAND = 0`. The provisional value only has to let the car move;
+   the sweep converts each PWM target into the m/s command the firmware needs, so the
+   fit does not depend on the provisional value being right.
+2. Tape a start line and put a tape measure along the run.
+3. Run:
+   ```
+   PYTHONPATH=src python -m mav.tools.calibrate_speed --port /dev/ttyACM0 \
+       --k-current 300 --pwm 50 70 90 120 150 180
+   ```
+   (`--drive ackermann` for the `final` build, which speaks `D` instead of `W`.)
+4. For each PWM: press Enter, the car runs for `--seconds`, it stops, you enter how
+   far it travelled in metres. The tool streams the command at 20 Hz on purpose — the
+   firmware's watchdog stops the motors after 500 ms without a valid line, so a
+   one-off command would coast after half a second and be measured as far too slow.
+5. The tool fits both constants, prints the residual, and shows the model against
+   every measurement. Paste the two lines into the sketch, recompile, and record them
+   here:
+
+   ```
+   MPS_TO_PWM   = ______   # measured <date>, <floor surface>, battery <V>
+   PWM_DEADBAND = ______
+   ```
+
+### Reading the result
+- **Any PWM that did not move the car** is evidence about the deadband, not a failed
+  point: the tool raises the deadband to at least that PWM. Include two low levels for
+  this reason.
+- **Residual above ~50 mm/s** means the motor is not behaving linearly in that range
+  (wheel slip, a binding wheel, or PWM 50 was under the breakaway). Re-run the points
+  that disagree.
+- **A negative breakaway** means the fitted line passed above the origin, which cannot
+  be inverted; the tool clamps it to 0 and says so. Do not trust that run.
+- **`PWM_DEADBAND` near or above the PWMs you drive at** means the car has almost no
+  usable low range: raise `policy.v_min` in `configs/<profile>.yaml` rather than
+  pretending the car can creep.
+- Keep `max_speed_mps` in `configs/vehicle.yaml` below the speed at `PWM 255`, or the
+  host will command a speed the motor cannot reach and the car will simply saturate.
+
 ## Still unknown (needed before writing the real actuator/camera code)
 - Motor driver model(s), motor type, gearbox.
 - Battery type, voltage, capacity; regulator(s) feeding the Jetson and the motors.
@@ -131,9 +200,10 @@ module (v1/v2/v3/GS) decides whether a driver/DTB update is needed on JetPack 6.
   `final.ino`). Until measured, `SERVO_CALIBRATED` is false and the firmware holds
   the servo neutral and keeps the motor stopped — the car cannot steer. That is
   deliberate: the previous placeholder (0) commanded 544 µs, i.e. hard lock.
-- **`MPS_TO_PWM`** in both sketches. Until measured it is 0, so every speed command
-  becomes PWM 0: the robot accepts valid commands and never moves. Both sketches
-  now print a warning at boot instead of failing silently.
+- **`MPS_TO_PWM` and `PWM_DEADBAND`** in both sketches. Until measured they are 0, and
+  `MPS_TO_PWM = 0` means every speed command becomes PWM 0: the robot accepts valid
+  commands and never moves. Both sketches now print a warning at boot instead of
+  failing silently. Procedure in "Speed calibration" above.
 - **Cone colour** (`obstacle.hues` in `configs/*.yaml`) — the detector's default is
   an unconfirmed orange band. Measure on the real cone [A11].
 - **Cone diameter** — the swerve clearance (`avoid.clearance_m = 0.16`) assumes

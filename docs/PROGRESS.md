@@ -381,6 +381,40 @@ edges, i.e. ~1000 px/m at 854 px width, ~750 px/m rescaled to the robot's 640.
 pitch, and `px_per_m` belongs to the camera mount.
 -> Unblocked by recording with the robot's own CSI camera on a real lane.
 
+## Task: measure MPS_TO_PWM (speed calibration) — 10 Nov 2026
+Blocking everything: `MPS_TO_PWM = 0` in both sketches, so every speed command
+becomes PWM 0 and the car never moves. Split into subtasks because it touches the
+firmware core, both sketches, a host tool and the docs:
+
+1. **The model is wrong, not just the number.** `pwm = mps * MPS_TO_PWM` assumes a
+   DC motor turns at a speed proportional to PWM from 0, which it does not: below a
+   breakaway PWM it does not turn at all. The policy commands 0.15-0.3 m/s, i.e.
+   the LOW end, where the deadband is a large fraction of the range. So the
+   calibration must fit TWO numbers — breakaway PWM and the slope above it — and a
+   naive "measure top speed at PWM 255, K = 255/top" is wrong at exactly the speeds
+   the car drives at.
+2. Put the conversion in `MavCore` (board-agnostic, already unit-tested with g++ on
+   the laptop) so the arithmetic is testable without hardware; both sketches call it.
+3. `src/mav/tools/calibrate_speed.py`: stream a PWM sweep over serial and fit the two
+   numbers. Needed because the 500 ms watchdog stops the motors if commands do not
+   keep arriving, so sweeping by hand in the serial monitor is impossible.
+4. Docs: the procedure, and correct the sketches' "measure wheels-lifted" comment —
+   a lifted wheel spins faster than a loaded one on the floor, so that measurement
+   is not the one the robot needs.
+
+Done when: `scripts/test_firmware_core.sh` passes the new conversion tests, both
+sketches compile, and `src/mav/tools/calibrate_speed.py --dry-run` prints a sweep.
+-> DONE 10 Nov 2026. `mav::speed_to_pwm()` lives in MavCore (laptop-tested:
+   deadband applied above zero, `stop` really coasts, clamp keeps the sign; each
+   assertion mutation-checked). Both sketches call it and carry `PWM_DEADBAND`.
+   Compiles: prototype 4624 B flash / 280 B RAM, final 5180 B / 321 B.
+   `calibrate_speed.py`: `--dry-run` verified; `fit_speed_model()` is pure and has
+   16 tests. The "measure wheels-lifted" advice in both sketches was WRONG (a
+   lifted wheel spins faster than a loaded one) and is now "measure on the floor".
+   Procedure written in `docs/hardware.md`, "Speed calibration".
+   **Still blocked on the operator**: the sweep itself needs the car on a clear
+   floor with the e-stop in hand. Nothing can be measured from here.
+
 ## Next tasks (in order)
 
 1. **T2 follow-up — BLOCKED on a user decision (asked 7 Nov 2026).** The policy cannot

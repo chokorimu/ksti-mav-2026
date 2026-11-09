@@ -102,6 +102,25 @@ int main() {
     CHECK(p.bad_lines() == 1);
   }
 
+  {  // speed_to_pwm: uncalibrated and stop are BOTH 0, never a moving state
+    CHECK(mav::speed_to_pwm(0.3f, 0.0f, 40.0f, 255) == 0);   // not calibrated
+    CHECK(mav::speed_to_pwm(0.3f, -5.0f, 40.0f, 255) == 0);  // nonsense gain
+    CHECK(mav::speed_to_pwm(0.0f, 300.0f, 40.0f, 255) == 0);  // stop, not deadband
+  }
+  {  // speed_to_pwm: the deadband is applied ABOVE zero, both directions
+    // 200 PWM per m/s, 40 counts of breakaway, 0.25 m/s -> 40 + 50 = 90.
+    CHECK(mav::speed_to_pwm(0.25f, 200.0f, 40.0f, 255) == 90);
+    CHECK(mav::speed_to_pwm(-0.25f, 200.0f, 40.0f, 255) == -90);
+    // Zero deadband must reproduce the old single-gain behaviour exactly, so an
+    // unmeasured deadband cannot silently change how the robot drives.
+    CHECK(mav::speed_to_pwm(0.25f, 200.0f, 0.0f, 255) == 50);
+    // A negative deadband is a measurement error, not a direction change.
+    CHECK(mav::speed_to_pwm(0.25f, 200.0f, -40.0f, 255) == 50);
+  }
+  {  // speed_to_pwm: clamps, and keeps the sign through the clamp
+    CHECK(mav::speed_to_pwm(5.0f, 200.0f, 40.0f, 255) == 255);
+    CHECK(mav::speed_to_pwm(-5.0f, 200.0f, 40.0f, 255) == -255);
+  }
   if (failures == 0) {
     std::printf("all MavCore protocol tests passed\n");
     return 0;

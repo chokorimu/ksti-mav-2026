@@ -129,6 +129,20 @@ tests/
     in `final.ino` used to boot the steering hard over (the Servo library clamps
     to 544 µs), and `MPS_TO_PWM = 0` made every speed command PWM 0. Both
     sketches now warn on serial at boot instead of failing silently.
+- `mav::speed_to_pwm()` in `firmware/arduino/lib/MavCore/`: the m/s -> PWM
+    conversion, in the board-agnostic core so it is unit-tested on the laptop
+    (`scripts/test_firmware_core.sh`) rather than only ever compiled. Takes TWO
+    measured constants — `MPS_TO_PWM` (slope) and `PWM_DEADBAND` (breakaway PWM)
+    — because a DC motor does not turn below a breakaway PWM, and a single gain
+    fitted at full throttle overstates the speed at the 0.15-0.3 m/s the policy
+    actually uses. `speed == 0` returns 0 so "stop" really coasts.
+- `src/mav/tools/calibrate_speed.py`: the measurement procedure in code. Streams
+    a PWM sweep over serial (the 500 ms watchdog makes sweeping by hand
+    impossible), asks for each distance, and least-squares fits both constants.
+    `--dry-run` prints the sweep and a hand-checkable worked fit. `sweep()` needs
+    hardware; `fit_speed_model()` is pure and tested in
+    `tests/test_calibrate_speed.py`. Procedure: `docs/hardware.md`,
+    "Speed calibration".
 - **Not written yet:** the firmware's measured constants (m/s->PWM calibration,
     servo model + microsecond range, servo 5 V BEC - all Q1: measure, do not
     guess), GPIO buttons, the real cone hue, and the dashboard's browser

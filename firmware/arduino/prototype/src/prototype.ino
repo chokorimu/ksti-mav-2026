@@ -8,8 +8,10 @@
 // both right wheels on channel B (skid steering by speed difference).
 //
 // STATUS: the pin map and the L298N output stage are final. The only
-// remaining unknown is MPS_TO_PWM, the speed calibration, which must be
-// MEASURED wheels-lifted and recorded in docs/hardware.md - do not guess.
+// remaining unknown is the speed calibration (MPS_TO_PWM + PWM_DEADBAND),
+// which must be MEASURED ON THE FLOOR and recorded in docs/hardware.md - do
+// not guess, and do not use a wheels-lifted measurement (a lifted wheel spins
+// faster than a loaded one, so it is the wrong number).
 //
 // Wiring notes (see docs/hardware.md for the full list):
 //   - L298N GND, Arduino GND and battery - MUST share one ground.
@@ -36,7 +38,25 @@ const int PIN_IN4 = 8;
 // ------------------------------------------------------------------------
 
 const int PWM_MAX       = 255;    // Uno/AVR: analogWrite range
-const float MPS_TO_PWM  = 0.0f;   // TODO: measured wheels-lifted -> docs/hardware.md
+
+// ---------------- speed calibration (MEASURE - do not guess) -------------
+// MPS_TO_PWM is PWM counts per m/s ABOVE the breakaway point; PWM_DEADBAND is
+// the breakaway PWM itself, below which this motor does not turn at all.
+//     pwm = PWM_DEADBAND + mps * MPS_TO_PWM      (and 0 for mps == 0)
+//
+// Two numbers, not one, because a DC motor is not linear from zero: the L298N's
+// voltage drop and static friction hold the car still until the PWM crosses a
+// threshold. A single gain measured at full throttle therefore OVERSTATES the
+// speed at low PWM, and the policy drives at 0.15-0.3 m/s - the low end. That
+// is what makes a one-number calibration either refuse to creep or lurch.
+//
+// Measure with the car ON THE FLOOR, because a lifted wheel spins faster than a
+// loaded one and would give the wrong number. Use
+// `python -m mav.tools.calibrate_speed`, then record both values in
+// docs/hardware.md.
+const float MPS_TO_PWM   = 0.0f;  // TODO: measured -> docs/hardware.md
+const float PWM_DEADBAND = 0.0f;  // TODO: measured -> docs/hardware.md
+
 // MPS_TO_PWM == 0 means "not measured". Without this flag the robot fails
 // SILENTLY: every speed command becomes PWM 0, the wheels never turn, and it
 // looks like a software bug rather than an uncalibrated robot.
@@ -68,7 +88,7 @@ void setup() {
     // Not fatal, but never silent: with MPS_TO_PWM == 0 every speed command
     // becomes PWM 0, so the robot receives valid commands and never moves.
     Serial.println(F("WARN: MPS_TO_PWM uncalibrated - wheels will not turn."));
-    Serial.println(F("      Measure wheels-lifted, then set MPS_TO_PWM."));
+    Serial.println(F("      Run: python -m mav.tools.calibrate_speed"));
   }
 }
 
@@ -99,11 +119,11 @@ void apply_outputs() {
   set_motor(PIN_ENB, PIN_IN3, PIN_IN4, mps_to_pwm(cmd.b));
 }
 
+// The conversion itself lives in MavCore so it is unit-tested on the laptop
+// (scripts/test_firmware_core.sh) instead of only ever being compiled for the
+// Uno. This wrapper just binds the measured constants.
 int mps_to_pwm(float mps) {
-  int pwm = (int)(mps * MPS_TO_PWM + (mps >= 0.0f ? 0.5f : -0.5f));
-  if (pwm > PWM_MAX) pwm = PWM_MAX;  // defense in depth: the host clamps too
-  if (pwm < -PWM_MAX) pwm = -PWM_MAX;
-  return pwm;
+  return mav::speed_to_pwm(mps, MPS_TO_PWM, PWM_DEADBAND, PWM_MAX);
 }
 
 void stop_motors() {

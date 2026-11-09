@@ -34,7 +34,24 @@ const int PIN_MOTOR_IN2  = 4;
 // ------------------------------------------------------------------------
 
 const int PWM_MAX       = 255;    // Uno/AVR: analogWrite range
-const float MPS_TO_PWM  = 0.0f;   // TODO: measured wheels-lifted -> docs/hardware.md
+
+// ---------------- speed calibration (MEASURE - do not guess) -------------
+// MPS_TO_PWM is PWM counts per m/s ABOVE the breakaway point; PWM_DEADBAND is
+// the breakaway PWM itself, below which the motor does not turn at all.
+//     pwm = PWM_DEADBAND + mps * MPS_TO_PWM      (and 0 for mps == 0)
+//
+// Two numbers, not one, because a DC motor is not linear from zero: the L298N's
+// voltage drop and static friction hold the car still until the PWM crosses a
+// threshold. A single gain measured at full throttle therefore OVERSTATES the
+// speed at low PWM, and the policy drives at 0.15-0.3 m/s - the low end.
+//
+// Measure with the car ON THE FLOOR (a lifted wheel spins faster than a loaded
+// one, so it is the wrong number) using
+// `python -m mav.tools.calibrate_speed --drive ackermann`, then record both
+// values in docs/hardware.md.
+const float MPS_TO_PWM   = 0.0f;  // TODO: measured -> docs/hardware.md
+const float PWM_DEADBAND = 0.0f;  // TODO: measured -> docs/hardware.md
+
 // MPS_TO_PWM == 0 means "not measured" (see the boot warning in setup()).
 const bool SPEED_CALIBRATED = MPS_TO_PWM > 0.0f;
 // Servo range in microseconds, measured not guessed. steer_rad > 0 is a
@@ -83,6 +100,7 @@ void setup() {
   stop_motor();
   if (!SPEED_CALIBRATED) {
     Serial.println(F("WARN: MPS_TO_PWM uncalibrated - motor will not turn."));
+    Serial.println(F("      Run: python -m mav.tools.calibrate_speed --drive ackermann"));
   }
   if (!SERVO_CALIBRATED) {
     // Not fatal: the car holds neutral and stays stopped, which is safe. But it
@@ -130,11 +148,11 @@ void apply_outputs() {
   set_motor(mps_to_pwm(cmd.b));
 }
 
+// The conversion itself lives in MavCore so it is unit-tested on the laptop
+// (scripts/test_firmware_core.sh) instead of only ever being compiled for the
+// Uno. This wrapper just binds the measured constants.
 int mps_to_pwm(float mps) {
-  int pwm = (int)(mps * MPS_TO_PWM + (mps >= 0.0f ? 0.5f : -0.5f));
-  if (pwm > PWM_MAX) pwm = PWM_MAX;  // defense in depth: the host clamps too
-  if (pwm < -PWM_MAX) pwm = -PWM_MAX;
-  return pwm;
+  return mav::speed_to_pwm(mps, MPS_TO_PWM, PWM_DEADBAND, PWM_MAX);
 }
 
 int clamp_int(int v, int lo, int hi) {
