@@ -1,13 +1,10 @@
-"""Start / emergency button events.
-
-The real GPIO implementation is NOT written yet: it depends on which pins are used and how the
-buttons are wired (and the physical e-stop must also cut motor power in hardware).
-"""
+"""Start / emergency button events."""
 from __future__ import annotations
 
 import queue
+import time
 from enum import Enum
-from typing import Protocol
+from typing import Callable, Protocol
 
 
 class Event(Enum):
@@ -18,6 +15,83 @@ class Event(Enum):
 class Buttons(Protocol):
     def poll(self) -> list[Event]:
         """Return events since the last call (already debounced)."""
+
+
+class GpioButtons:
+    """Non-blocking, debounced buttons using Jetson.GPIO BOARD numbering.
+
+    Buttons are wired from each GPIO input to ground, so an unpressed button is
+    HIGH and a pressed button is LOW through the internal pull-up resistor.
+    ``gpio`` and ``clock`` are injectable for tests without Jetson hardware.
+    """
+
+    def __init__(
+        self,
+        start_pin: int,
+        emergency_pin: int,
+        *,
+        debounce_s: float = 0.05,
+        gpio=None,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        if debounce_s < 0:
+            raise ValueError("debounce_s must not be negative")
+        if start_pin == emergency_pin:
+            raise ValueError("start_pin and emergency_pin must differ")
+
+        if gpio is None:
+            try:
+                import Jetson.GPIO as gpio_module
+            except ImportError as exc:
+                raise RuntimeError(
+                    "GpioButtons requires the Jetson.GPIO package on the Jetson"
+                ) from exc
+            gpio = gpio_module
+
+        self._gpio = gpio
+        self._clock = clock
+        self._debounce_s = debounce_s
+        self._pins = {
+            start_pin: Event.START,
+            emergency_pin: Event.EMERGENCY,
+        }
+        self._raw_state = {}
+        self._stable_state = {}
+        self._changed_at = {}
+
+        try:
+            gpio.setmode(gpio.BOARD)
+            for pin in self._pins:
+                gpio.setup(pin, gpio.IN, pull_up_down=gpio.PUD_UP)
+                state = gpio.input(pin)
+                self._raw_state[pin] = state
+                self._stable_state[pin] = state
+                self._changed_at[pin] = clock()
+        except Exception:
+            self.close()
+            raise
+
+    def poll(self) -> list[Event]:
+        now = self._clock()
+        events: list[Event] = []
+        for pin, event in self._pins.items():
+            state = self._gpio.input(pin)
+            if state != self._raw_state[pin]:
+                self._raw_state[pin] = state
+                self._changed_at[pin] = now
+            elif (
+                state != self._stable_state[pin]
+                and now - self._changed_at[pin] >= self._debounce_s
+            ):
+                self._stable_state[pin] = state
+                if state == self._gpio.LOW:
+                    events.append(event)
+        return events
+
+    def close(self) -> None:
+        cleanup = getattr(self._gpio, "cleanup", None)
+        if cleanup is not None:
+            cleanup(list(self._pins))
 
 
 class ScriptedButtons:
