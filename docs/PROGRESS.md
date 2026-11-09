@@ -80,6 +80,20 @@ Candidate fixes (NOT decided — waiting on the user):
 - Policy: the speed law multiplying by confidence turns a detector problem into a
   motion problem — a detector artefact should not be able to stop the robot.
 
+### T2 update 3: conf_min lowered, and the sim now reads `policy:` (9 Nov 2026)
+
+`LanePolicyConfig.conf_min` 0.3 → **0.15** (also in `configs/prototype.yaml` and
+`configs/sim.yaml`). At 0.3 the policy called a low-confidence frame "lane lost" and
+stopped instead of steering; on the measured track that is most frames.
+
+Found on the way: `runner.main()` never passed `policy_cfg`, so the new `policy:`
+section in `configs/sim.yaml` was read by **nobody** — the CLI silently ran on code
+defaults. Fixed with `_policy_config()`, the same top-level section `robot.py` reads,
+so `run.sh sim` and `run.sh prototype` steer with the same numbers. Pinned by
+`test_cli_reads_the_policy_section`.
+
+Full suite 219 passed. Still not re-measured on the KSTI track.
+
 ### T2 update 2: the policy deadlock is IN (8 Nov 2026, commit `6f2d8c1`)
 
 The user chose "fix deadlock policy dulu". One line in `src/mav/planning/lane_policy.py`:
@@ -297,7 +311,14 @@ Split into 4 subtasks (one at a time, commit after each):
    `scripts/flash_firmware.sh <prototype|final>` (compile + upload, port
    auto-detect, `--compile-only`/`--list-ports`/`--port`); tested end-to-end
    except the physical upload (no Uno was plugged in at the time).
-6. Checkpoint / start-finish line detection. Not started. Split into subtasks before coding.
+6. ~~Checkpoint / start-finish line detection~~ DONE 9 Nov 2026: `CrossLineDetector`
+   in `src/mav/perception/checkpoint.py` (HSV colour-first, configurable hue bands
+   per [A11]), `CrossLineTracker` (one event per physical crossing, conservative
+   about lines first seen deep), integration in `Driver` (robot.py) and
+   `run_sim`/`policy_fn` (sim/runner.py). 28 tests pass; sim "checkpoints"
+   scenario counts 3 CPs + finish line correctly; emergency-resume preserves
+   checkpoint count. Still needed: calibrate hue bands on the real arena
+   (block: task 2 — real video recordings).
 7. ~~Web-simulator bridge~~ replaced by the web dashboard for the synthetic sim (current
    task above). The external web simulator is no longer needed; Q5 closed.
 

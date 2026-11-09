@@ -81,3 +81,20 @@ def test_closed_loop_black_markings():
     res = run_sim("straight", max_steps=120, seed=5, world_cfg=cfg)
     assert res.detection_rate > 0.8
     assert res.mean_abs_offset < 0.15
+
+
+def test_cli_reads_the_policy_section():
+    # A `policy:` edit in configs/sim.yaml must reach the policy the CLI builds.
+    # It was silently ignored once: `main()` never passed policy_cfg, so the sim
+    # ran on code defaults while the file said otherwise.
+    from mav.config import load_profile
+    from mav.sim.runner import _policy_config
+
+    expected = (load_profile() or {}).get("policy") or {}
+    got = _policy_config()
+    if expected:
+        assert got is not None
+        for key, value in expected.items():
+            assert getattr(got, key) == value
+    else:
+        assert got is None

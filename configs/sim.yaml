@@ -4,6 +4,7 @@ actuator: { type: sim }
 model: { path: models/prototype/ }
 debug: { enabled: true }
 network: { enabled: true }
+policy: { conf_min: 0.15 }  # B1: steer (not stop) on low-confidence frames
 
 # Closed-loop synthetic run: scripts/run.sh sim [scenario] [--steps N] [--overlay out.mp4]
 sim:

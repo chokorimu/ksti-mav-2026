@@ -435,6 +435,19 @@ def _sim_config() -> dict:
     return (yaml.safe_load(path.read_text()) or {}).get("sim") or {}
 
 
+def _policy_config() -> LanePolicyConfig | None:
+    """Top-level `policy:` section of the profile config, if present.
+
+    The same section `robot.py` reads, so `run.sh sim` and `run.sh prototype`
+    steer with the same numbers. Without this the sim silently used the code
+    defaults and any `policy:` edit looked applied but was not.
+    """
+    from mav.config import load_profile
+
+    section = (load_profile() or {}).get("policy") or {}
+    return LanePolicyConfig(**section) if section else None
+
+
 def _print_result(res: SimResult) -> None:
     status = "CRASHED" if res.crashed else ("finished" if res.finished else "stopped (max steps)")
     print(f"scenario : {res.scenario}  -> {status}")
@@ -489,6 +502,7 @@ def main(argv: list[str] | None = None) -> int:
         overlay_path=args.overlay or cfg.get("overlay"),
         realtime=args.realtime or bool(dash.get("realtime", False)),
         bridge=bridge,
+        policy_cfg=_policy_config(),
     )
     _print_result(res)
     if server is not None:

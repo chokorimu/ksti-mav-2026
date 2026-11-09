@@ -32,7 +32,7 @@ class LanePolicyConfig:
     v_max: float = 1.0              # m/s, start low and raise after testing
     v_min: float = 0.15             # m/s floor while still tracking
     curv_slow: float = 1.0          # |kappa| at which speed drops to v_min
-    conf_min: float = 0.3           # below this the measurement is not trusted
+    conf_min: float = 0.15          # below this the measurement is not trusted (B1: lower to steer on low-res frames)
     on_lost: str = "hold"           # "stop" | "hold"  hold keeps the last command instead of stopping
 
 
